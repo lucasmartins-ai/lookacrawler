@@ -23,7 +23,7 @@ Phase 1: Setup & Protocol Core [COMPLETED]
    │
     ├── Phase 8: Structured JSON Schema & Batch Extraction [COMPLETED]
     │
-    └── Phase 9: CLI Interface & Docker Packaging
+    └── Phase 9: CLI Interface & Docker Packaging [COMPLETED]
 ```
 
 ---
@@ -91,7 +91,9 @@ Phase 1: Setup & Protocol Core [COMPLETED]
 
 ---
 
-### Phase 9: CLI Interface & Docker Packaging (Status: PLANNED)
-- [ ] Create zero-dependency CLI interface (`lookacrawler extract <url> --mode deep`).
-- [ ] Create Dockerfile with pre-baked Playwright Chromium dependencies for isolated container execution.
-- [ ] Support HTTP/SSE transport mode alongside stdio transport for remote deployment.
+### Phase 9: CLI Interface & Docker Packaging (Status: COMPLETED)
+- [x] Create zero-dependency CLI interface (`cli.ts` / `lookacrawler` bin command).
+- [x] Create Dockerfile with pre-baked Playwright Chromium dependencies for isolated container execution.
+- [x] Support HTTP/SSE transport mode (`--transport sse --port 3000`) alongside `stdio` transport for remote server deployments.
+- [x] Add CLI test suite (`cli.test.ts`) and npm CLI scripts.
+

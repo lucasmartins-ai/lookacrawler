@@ -46,13 +46,47 @@ LookaCrawler is a token-optimized local **Model Context Protocol (MCP) Server** 
 bun install
 ```
 
+### CLI Interface
+
+LookaCrawler includes a zero-dependency CLI interface:
+
+```bash
+# Single URL Markdown extraction
+bun run cli.ts extract https://news.ycombinator.com --mode fast
+
+# Headless Playwright Chromium extraction with CSS selector target
+bun run cli.ts extract https://example.com --mode deep --selector "main" --json
+
+# Batch concurrent multi-URL extraction
+bun run cli.ts batch https://example.com https://news.ycombinator.com --concurrency 3
+
+# Structured JSON schema & metadata extraction
+bun run cli.ts structured https://example.com --schema '{"title":"h1","links":"a"}'
+
+# Start MCP Server with SSE HTTP Transport
+bun run cli.ts serve --transport sse --port 3000
+```
+
+### Docker Container Deployment
+
+```bash
+# Build Docker container image
+docker build -t lookacrawler .
+
+# Run LookaCrawler container in isolated environment (SSE server on port 3000)
+docker run -p 3000:3000 lookacrawler
+```
+
 ### Running the MCP Server
 
 ```bash
-# Start MCP server over stdio
+# Start MCP server over standard stdio (default)
 bun run index.ts
 
-# Build distribution bundle
+# Start MCP server over SSE HTTP transport (Port 3000)
+bun run serve
+
+# Build production bundle
 bun run build
 ```
 

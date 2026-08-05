@@ -3,10 +3,15 @@
   "version": "1.0.0",
   "description": "Token-optimized local MCP server for web crawling and LLM content extraction",
   "main": "index.ts",
+  "bin": {
+    "lookacrawler": "./cli.ts"
+  },
   "type": "module",
   "scripts": {
     "start": "bun run index.ts",
     "dev": "bun --watch run index.ts",
+    "cli": "bun run cli.ts",
+    "serve": "bun run index.ts --transport sse",
     "build": "bun build index.ts --target bun --external playwright --external playwright-core --outdir ./dist",
     "test": "bun test"
   },

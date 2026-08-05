@@ -1,5 +1,7 @@
+import { createServer } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
 import { extractFast, extractDeep, extractStructured, batchExtract } from "./extractor.js";
 import { getCachedPage, setCachedPage } from "./cache.js";
@@ -278,12 +280,57 @@ server.registerTool(
 );
 
 /**
- * Start standard input/output (stdio) transport for MCP client communication
+ * Start input/output transport for MCP client communication (stdio or SSE HTTP)
  */
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("LookaCrawler MCP Server running on stdio transport");
+  const args = process.argv.slice(2);
+  let transportMode = "stdio";
+  let port = 3000;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--transport=sse" || args[i] === "--sse") {
+      transportMode = "sse";
+    } else if (args[i] === "--transport" && args[i + 1]) {
+      transportMode = args[i + 1];
+      i++;
+    } else if (args[i].startsWith("--transport=")) {
+      transportMode = args[i].split("=")[1];
+    } else if (args[i] === "--port" && args[i + 1]) {
+      port = parseInt(args[i + 1], 10);
+      i++;
+    } else if (args[i].startsWith("--port=")) {
+      port = parseInt(args[i].split("=")[1], 10);
+    }
+  }
+
+  if (transportMode === "sse") {
+    let sseTransport: SSEServerTransport | null = null;
+    const httpServer = createServer(async (req, res) => {
+      const url = new URL(req.url || "", `http://${req.headers.host || "localhost"}`);
+      if (url.pathname === "/sse") {
+        sseTransport = new SSEServerTransport("/messages", res);
+        await server.connect(sseTransport);
+      } else if (url.pathname === "/messages" && req.method === "POST") {
+        if (sseTransport) {
+          await sseTransport.handlePostMessage(req, res);
+        } else {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SSE session not established" }));
+        }
+      } else {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("Not Found");
+      }
+    });
+
+    httpServer.listen(port, () => {
+      console.log(`LookaCrawler MCP Server listening on SSE transport at http://localhost:${port}/sse`);
+    });
+  } else {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("LookaCrawler MCP Server running on stdio transport");
+  }
 }
 
 main().catch((error) => {
