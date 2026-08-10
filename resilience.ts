@@ -54,6 +54,7 @@ export function detectAntiBot(status: number, htmlContent: string): AntiBotCheck
  */
 export class RateLimiter {
   private lastRequestMap = new Map<string, number>();
+  private domainQueues = new Map<string, Promise<void>>();
   private defaultDelayMs: number;
 
   constructor(defaultDelayMs = 500) {
@@ -77,16 +78,16 @@ export class RateLimiter {
    */
   async throttle(url: string, delayMs = this.defaultDelayMs): Promise<void> {
     const domain = this.getDomain(url);
-    const last = this.lastRequestMap.get(domain) || 0;
-    const now = Date.now();
-    const elapsed = now - last;
-
-    if (elapsed < delayMs) {
-      const waitTime = delayMs - elapsed;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
-    }
-
-    this.lastRequestMap.set(domain, Date.now());
+    const previous = this.domainQueues.get(domain) || Promise.resolve();
+    const scheduled = previous.then(async () => {
+      const elapsed = Date.now() - (this.lastRequestMap.get(domain) || 0);
+      if (elapsed < delayMs) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs - elapsed));
+      }
+      this.lastRequestMap.set(domain, Date.now());
+    });
+    this.domainQueues.set(domain, scheduled.catch(() => {}));
+    await scheduled;
   }
 }
 
@@ -153,9 +154,17 @@ export async function retryWithBackoff<T>(
       if (attempt > maxRetries) {
         throw error;
       }
-      // If error indicates permanent bot block or 404, don't retry uselessly
-      if (error.message && error.message.includes("HTTP 404")) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/HTTP (?:400|401|403|404|405|406|410|413|422)/.test(message) ||
+          message.includes("Anti-Bot protection") || message.includes("Only HTTP/HTTPS") ||
+          message.includes("private or local hosts") || message.includes("selector")) {
         throw error;
+      }
+      try {
+        const { recordMetric } = await import("./metrics.js");
+        recordMetric("retries");
+      } catch {
+        // Metrics must never change retry behavior.
       }
       await new Promise((resolve) => setTimeout(resolve, delay));
       delay *= backoffFactor;

@@ -1,4 +1,4 @@
-FROM oven/bun:1.2 as base
+FROM oven/bun:1.3 as base
 WORKDIR /app
 
 # Install System dependencies for Playwright Chromium
@@ -32,7 +32,7 @@ RUN bun install
 COPY . .
 
 # Install Playwright Chromium browser binaries
-RUN npx playwright install chromium
+RUN bunx playwright install chromium
 
 EXPOSE 3000
 

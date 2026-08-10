@@ -1,8 +1,6 @@
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
-import { chromium } from "playwright-extra";
-import stealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser } from "playwright";
 import {
   detectAntiBot,
@@ -10,9 +8,10 @@ import {
   retryWithBackoff,
   type AntiBotCheckResult,
 } from "./resilience.js";
-
-// Register stealth plugin once
-chromium.use(stealthPlugin());
+import { getBrowser } from "./browser-manager.js";
+import { getMaxResponseBytes, validateTargetUrl } from "./security.js";
+import { buildCacheKey, getCachedPage, setCachedPage } from "./cache.js";
+import { recordMetric } from "./metrics.js";
 
 export interface FastExtractOptions {
   url: string;
@@ -32,6 +31,13 @@ export interface DeepExtractOptions {
   cookies?: Record<string, string>;
   proxy?: string;
   maxRetries?: number;
+}
+
+const fastInFlight = new Map<string, Promise<string>>();
+const deepInFlight = new Map<string, Promise<string>>();
+
+function requestKey(options: FastExtractOptions | DeepExtractOptions): string {
+  return JSON.stringify(options);
 }
 
 /**
@@ -57,6 +63,7 @@ export async function fetchHtml(
   } = {}
 ): Promise<string> {
   const { timeoutMs = 10000, headers = {}, cookies, proxy } = options;
+  await validateTargetUrl(url);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -87,8 +94,27 @@ export async function fetchHtml(
       fetchOpts.proxy = proxy;
     }
 
-    const response = await fetch(url, fetchOpts);
+    let currentUrl = url;
+    let response: Response | undefined;
+    for (let redirect = 0; redirect <= 5; redirect++) {
+      response = await fetch(currentUrl, { ...fetchOpts, redirect: "manual" });
+      if (response.status < 300 || response.status >= 400) break;
+      const location = response.headers.get("location");
+      if (!location || redirect === 5) throw new Error(`HTTP ${response.status}: redirect limit exceeded`);
+      currentUrl = new URL(location, currentUrl).toString();
+      await validateTargetUrl(currentUrl);
+      await globalRateLimiter.throttle(currentUrl);
+    }
+    if (!response) throw new Error("Request did not return a response");
+    const contentLength = Number(response.headers.get("content-length") || 0);
+    if (contentLength > getMaxResponseBytes()) {
+      throw new Error(`Response exceeds maximum size of ${getMaxResponseBytes()} bytes`);
+    }
     const htmlText = await response.text();
+    if (Buffer.byteLength(htmlText, "utf8") > getMaxResponseBytes()) {
+      throw new Error(`Response exceeds maximum size of ${getMaxResponseBytes()} bytes`);
+    }
+    recordMetric("bytesFetched", Buffer.byteLength(htmlText, "utf8"));
 
     const antiBotCheck: AntiBotCheckResult = detectAntiBot(response.status, htmlText);
     if (antiBotCheck.isBlocked) {
@@ -138,10 +164,11 @@ export function processHtmlToMarkdown(
   options: { url: string; cssSelector?: string }
 ): string {
   const { url, cssSelector } = options;
-
-  // 1. Virtual DOM Simulation
   const dom = new JSDOM(rawHtml, { url });
-  const document = dom.window.document;
+  return processDocumentToMarkdown(dom.window.document, cssSelector);
+}
+
+function processDocumentToMarkdown(document: Document, cssSelector?: string): string {
 
   // 2. Aggressive DOM Pruning (Token Economy)
   // Remove script, style, svg, iframe, noscript, nav, footer, and form tags
@@ -196,16 +223,36 @@ export function processHtmlToMarkdown(
  * Execute Fast Extraction pipeline with retries:
  * Native Fetch -> Shared Token-Optimization Pipeline
  */
-export async function extractFast(options: FastExtractOptions): Promise<string> {
+export function extractFast(options: FastExtractOptions): Promise<string> {
+  const key = requestKey(options);
+  const existing = fastInFlight.get(key);
+  if (existing) return existing;
+  const promise = extractFastOnce(options).finally(() => fastInFlight.delete(key));
+  fastInFlight.set(key, promise);
+  return promise;
+}
+
+async function extractFastOnce(options: FastExtractOptions): Promise<string> {
   const { url, cssSelector, timeoutMs, headers, cookies, proxy, maxRetries = 3 } = options;
 
-  return retryWithBackoff(
+  recordMetric("requests");
+  const startedAt = Date.now();
+  try {
+    const result = await retryWithBackoff(
     async () => {
       const rawHtml = await fetchHtml(url, { timeoutMs, headers, cookies, proxy });
       return processHtmlToMarkdown(rawHtml, { url, cssSelector });
     },
     { maxRetries }
   );
+    recordMetric("successes");
+    recordMetric("durationMs", Date.now() - startedAt);
+    return result;
+  } catch (error) {
+    recordMetric("failures");
+    recordMetric("durationMs", Date.now() - startedAt);
+    throw error;
+  }
 }
 
 /**
@@ -219,7 +266,16 @@ const ALLOWED_RESOURCE_TYPES = new Set(["document", "script", "fetch", "xhr"]);
  * Execute Deep Extraction pipeline (Playwright Chromium Engine with Stealth & Proxy):
  * Headless Browser -> Request Interception (Resource Blocking) -> DOM Rendering -> Anti-Bot check -> Token Pipeline
  */
-export async function extractDeep(options: DeepExtractOptions): Promise<string> {
+export function extractDeep(options: DeepExtractOptions): Promise<string> {
+  const key = requestKey(options);
+  const existing = deepInFlight.get(key);
+  if (existing) return existing;
+  const promise = extractDeepOnce(options).finally(() => deepInFlight.delete(key));
+  deepInFlight.set(key, promise);
+  return promise;
+}
+
+async function extractDeepOnce(options: DeepExtractOptions): Promise<string> {
   const {
     url,
     cssSelector,
@@ -232,26 +288,14 @@ export async function extractDeep(options: DeepExtractOptions): Promise<string> 
 
   return retryWithBackoff(
     async () => {
-      let browser: Browser | null = null;
+      let context: Awaited<ReturnType<Browser["newContext"]>> | null = null;
 
       try {
+        await validateTargetUrl(url);
         await globalRateLimiter.throttle(url);
+        const browser = await getBrowser(proxy);
 
-        const launchOptions: any = {
-          headless: true,
-          args: [
-            "--disable-blink-features=AutomationControlled",
-            "--disable-features=IsolateOrigins,site-per-process",
-          ],
-        };
-
-        if (proxy) {
-          launchOptions.proxy = { server: proxy };
-        }
-
-        browser = (await chromium.launch(launchOptions)) as unknown as Browser;
-
-        const context = await browser.newContext({
+        context = await browser.newContext({
           userAgent:
             headers?.["User-Agent"] ||
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -292,7 +336,11 @@ export async function extractDeep(options: DeepExtractOptions): Promise<string> 
           timeout: timeoutMs,
         });
 
-        await page.waitForTimeout(1000);
+        if (cssSelector) {
+          await page.locator(cssSelector).first().waitFor({ state: "attached", timeout: Math.min(timeoutMs, 3000) }).catch(() => {});
+        } else {
+          await page.waitForLoadState("networkidle", { timeout: Math.min(timeoutMs, 3000) }).catch(() => {});
+        }
 
         const renderedHtml = await page.content();
         const status = response ? response.status() : 200;
@@ -304,9 +352,7 @@ export async function extractDeep(options: DeepExtractOptions): Promise<string> 
 
         return processHtmlToMarkdown(renderedHtml, { url, cssSelector });
       } finally {
-        if (browser) {
-          await browser.close().catch(() => {});
-        }
+        await context?.close().catch(() => {});
       }
     },
     { maxRetries }
@@ -382,7 +428,10 @@ export interface BatchExtractResult {
  */
 export function extractMetadata(rawHtml: string, url: string): PageMetadata {
   const dom = new JSDOM(rawHtml, { url });
-  const document = dom.window.document;
+  return extractMetadataFromDocument(dom.window.document);
+}
+
+function extractMetadataFromDocument(document: Document): PageMetadata {
 
   const getMeta = (selector: string): string | undefined => {
     const el = document.querySelector(selector);
@@ -460,19 +509,12 @@ export async function fetchRawHtml(
     const { timeoutMs = 15000, headers, cookies, proxy, maxRetries = 3 } = options;
     return retryWithBackoff(
       async () => {
-        let browser: Browser | null = null;
+        let context: Awaited<ReturnType<Browser["newContext"]>> | null = null;
         try {
+          await validateTargetUrl(url);
           await globalRateLimiter.throttle(url);
-          const launchOptions: any = {
-            headless: true,
-            args: [
-              "--disable-blink-features=AutomationControlled",
-              "--disable-features=IsolateOrigins,site-per-process",
-            ],
-          };
-          if (proxy) launchOptions.proxy = { server: proxy };
-          browser = (await chromium.launch(launchOptions)) as unknown as Browser;
-          const context = await browser.newContext({
+          const browser = await getBrowser(proxy);
+          context = await browser.newContext({
             userAgent:
               headers?.["User-Agent"] ||
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -504,7 +546,7 @@ export async function fetchRawHtml(
             waitUntil: "domcontentloaded",
             timeout: timeoutMs,
           });
-          await page.waitForTimeout(1000);
+          await page.waitForLoadState("networkidle", { timeout: Math.min(timeoutMs, 3000) }).catch(() => {});
           const renderedHtml = await page.content();
           const status = response ? response.status() : 200;
           const antiBotCheck = detectAntiBot(status, renderedHtml);
@@ -513,7 +555,7 @@ export async function fetchRawHtml(
           }
           return renderedHtml;
         } finally {
-          if (browser) await browser.close().catch(() => {});
+          await context?.close().catch(() => {});
         }
       },
       { maxRetries }
@@ -556,14 +598,13 @@ export async function extractStructured(
     maxRetries,
   });
 
-  const metadata = includeMetadata ? extractMetadata(rawHtml, url) : undefined;
-  const markdown = processHtmlToMarkdown(rawHtml, { url, cssSelector });
+  const dom = new JSDOM(rawHtml, { url });
+  const document = dom.window.document;
+  const metadata = includeMetadata ? extractMetadataFromDocument(document) : undefined;
 
   let data: Record<string, string | string[]> | undefined = undefined;
 
   if (schema && Object.keys(schema).length > 0) {
-    const dom = new JSDOM(rawHtml, { url });
-    const document = dom.window.document;
     data = {};
 
     for (const [key, selector] of Object.entries(schema)) {
@@ -577,6 +618,8 @@ export async function extractStructured(
       }
     }
   }
+
+  const markdown = processDocumentToMarkdown(document, cssSelector);
 
   return {
     url,
@@ -613,6 +656,23 @@ export async function batchExtract(
       if (!targetUrl) break;
 
       try {
+        const canCache = !headers && !cookies && !proxy;
+        const cacheKey = buildCacheKey({ url: targetUrl, mode, cssSelector });
+        if (canCache) {
+          const cached = getCachedPage(cacheKey);
+          if (cached !== null) {
+            const charCount = cached.length;
+            results.push({
+              url: targetUrl,
+              success: true,
+              markdown: cached,
+              charCount,
+              estimatedTokens: Math.ceil(charCount / 4),
+            });
+            continue;
+          }
+        }
+
         let markdown: string;
         if (mode === "deep") {
           markdown = await extractDeep({
@@ -646,6 +706,7 @@ export async function batchExtract(
           charCount,
           estimatedTokens,
         });
+        if (canCache) setCachedPage(cacheKey, markdown);
       } catch (err: any) {
         results.push({
           url: targetUrl,
@@ -673,4 +734,3 @@ export async function batchExtract(
     results,
   };
 }
-

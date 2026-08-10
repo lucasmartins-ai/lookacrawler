@@ -78,7 +78,7 @@ The system's core design pillar is **Token Economy**: minimizing prompt overhead
 | HTML Parsing | `cheerio` / `jsdom` | Fast DOM traversal, manipulation, and tag/attribute pruning |
 | Main Content | `@mozilla/readability` | Heuristic extraction of primary article/page content |
 | Markdown | `turndown` | HTML-to-Markdown converter |
-| Headless Browser | `playwright` + `playwright-extra` + `puppeteer-extra-plugin-stealth` | JS-rendered page crawling ("deep" mode) with stealth and resource blocking |
+| Headless Browser | `playwright` | JS-rendered page crawling ("deep" mode) with reusable browser pool and resource blocking |
 | Resilience | `resilience.ts` | Per-domain rate limiting, exponential backoff retries, anti-bot detection, and proxy rotation |
 
 ---
@@ -135,3 +135,5 @@ All extracted HTML MUST undergo the 4-stage token optimization pipeline:
 2. **Deterministic Outputs:** Output Markdown must omit extraneous metadata unless explicitly requested.
 3. **Error Isolation:** Network failures (4xx, 5xx, timeouts) must return structured JSON error payloads through the MCP tool response rather than crashing the MCP stdio server connection.
 4. **Memory Hygiene:** Playwright browser contexts must be closed immediately in `finally` blocks.
+5. **Network Safety:** Only public HTTP/HTTPS targets are accepted; redirects are revalidated and response bodies have a configurable size limit.
+6. **Cache Correctness:** Cache keys include URL, mode, selector, schema variant, and pipeline version.

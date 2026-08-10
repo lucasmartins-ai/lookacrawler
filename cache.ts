@@ -1,9 +1,11 @@
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 
 /**
  * Initialize local SQLite database for caching scraped web pages
  */
 const db = new Database("crawler_cache.sqlite", { create: true });
+db.run("PRAGMA busy_timeout = 5000");
 
 // Create table if it does not exist
 db.run(`
@@ -18,6 +20,25 @@ db.run(`
  * Cache TTL: 24 hours in milliseconds
  */
 export const TTL_MS = 24 * 60 * 60 * 1000;
+
+export interface CacheKeyOptions {
+  url: string;
+  mode?: "fast" | "deep";
+  cssSelector?: string;
+  pipelineVersion?: string;
+  variant?: unknown;
+}
+
+export function buildCacheKey(options: CacheKeyOptions): string {
+  const canonical = JSON.stringify({
+    url: options.url,
+    mode: options.mode || "fast",
+    cssSelector: options.cssSelector || "",
+    pipelineVersion: options.pipelineVersion || "1",
+    variant: options.variant || null,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
+}
 
 interface PageRecord {
   url: string;
@@ -44,6 +65,8 @@ export function getCachedPage(url: string): string | null {
     return row.content;
   }
 
+  db.query("DELETE FROM pages WHERE url = ?").run(url);
+
   return null;
 }
 
@@ -57,4 +80,8 @@ export function setCachedPage(url: string, content: string): void {
     "INSERT OR REPLACE INTO pages (url, content, timestamp) VALUES (?, ?, ?)"
   );
   query.run(url, content, Date.now());
+}
+
+export function clearCache(): void {
+  db.run("DELETE FROM pages");
 }

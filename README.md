@@ -25,6 +25,7 @@ LookaCrawler is a token-optimized local **Model Context Protocol (MCP) Server** 
 - **Concurrent Batch Crawling:** Crawl up to 20 URLs simultaneously with configurable worker concurrency and aggregate token/byte metrics reporting.
 - **DOM Targeting (`css_selector`):** Target specific HTML subtrees to extract only the necessary content node.
 - **Local SQLite Caching:** Stores extracted Markdown in `crawler_cache.sqlite` with a 24-hour TTL to eliminate redundant network traffic.
+- **Safe Remote Mode:** SSE binds to localhost by default, supports bearer-token authentication, blocks private hosts, validates redirects, and limits response size.
 
 ---
 
@@ -34,7 +35,7 @@ LookaCrawler is a token-optimized local **Model Context Protocol (MCP) Server** 
 - **Protocol:** `@modelcontextprotocol/sdk`
 - **Article Extraction:** `@mozilla/readability` + `jsdom`
 - **Markdown Conversion:** `turndown`
-- **Headless Browser:** `playwright` + `playwright-extra` + `puppeteer-extra-plugin-stealth`
+- **Headless Browser:** `playwright` with a reusable browser pool
 
 ---
 
@@ -89,6 +90,12 @@ bun run serve
 # Build production bundle
 bun run build
 ```
+
+### Production limits
+
+- `HOST`: SSE bind host, defaults to `127.0.0.1`.
+- `LOOKACRAWLER_SSE_TOKEN`: optional bearer token for SSE, health, and metrics endpoints.
+- `LOOKACRAWLER_MAX_RESPONSE_BYTES`: maximum response size, defaults to 10 MiB.
 
 ---
 

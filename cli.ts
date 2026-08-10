@@ -1,6 +1,4 @@
 #!/usr/bin/env bun
-import { extractFast, extractDeep, extractStructured, batchExtract } from "./extractor.js";
-import { getCachedPage, setCachedPage } from "./cache.js";
 
 const VERSION = "1.0.0";
 
@@ -87,10 +85,14 @@ async function runCli() {
     const maxRetries = getOption(args, "--max-retries") ? parseInt(getOption(args, "--max-retries")!, 10) : 3;
     const isJson = args.includes("--json");
     const noCache = args.includes("--no-cache");
+    const { extractFast, extractDeep } = await import("./extractor.js");
+    const { buildCacheKey, getCachedPage, setCachedPage } = await import("./cache.js");
+    const { validateTargetUrl } = await import("./security.js");
 
+    const cacheKey = buildCacheKey({ url, mode, cssSelector: selector });
     if (!noCache && !proxy) {
-      const cached = getCachedPage(url);
-      if (cached) {
+      const cached = getCachedPage(cacheKey);
+      if (cached !== null) {
         if (isJson) {
           console.log(JSON.stringify({ url, mode, cached: true, content: cached }, null, 2));
         } else {
@@ -101,12 +103,13 @@ async function runCli() {
     }
 
     try {
+      await validateTargetUrl(url);
       const markdown = mode === "deep"
         ? await extractDeep({ url, cssSelector: selector, proxy, maxRetries })
         : await extractFast({ url, cssSelector: selector, proxy, maxRetries });
 
       if (!noCache && !proxy) {
-        setCachedPage(url, markdown);
+        setCachedPage(cacheKey, markdown);
       }
 
       if (isJson) {
@@ -122,6 +125,7 @@ async function runCli() {
   }
 
   if (command === "batch") {
+    const { batchExtract } = await import("./extractor.js");
     const urls = args.filter((arg) => !arg.startsWith("-") && arg !== "batch");
     if (urls.length === 0) {
       console.error("Error: Missing target URLs for 'batch' command.");
@@ -144,6 +148,7 @@ async function runCli() {
   }
 
   if (command === "structured") {
+    const { extractStructured } = await import("./extractor.js");
     const urls = args.filter((arg) => !arg.startsWith("-") && arg !== "structured");
     if (urls.length === 0) {
       console.error("Error: Missing target URL for 'structured' command.");

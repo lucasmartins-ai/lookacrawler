@@ -18,11 +18,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@mozilla/readability": "^0.6.0",
-    "cheerio": "^1.0.0",
     "jsdom": "^30.0.1",
     "playwright": "^1.62.1",
-    "playwright-extra": "^4.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "turndown": "^7.2.4",
     "zod": "^3.24.1"
   },

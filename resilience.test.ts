@@ -57,6 +57,17 @@ describe("Resilience Module (resilience.ts)", () => {
   });
 
   describe("retryWithBackoff", () => {
+    test("does not retry permanent HTTP errors", async () => {
+      let calls = 0;
+      await expect(
+        retryWithBackoff(async () => {
+          calls++;
+          throw new Error("HTTP 401: Unauthorized");
+        }, { maxRetries: 3, initialDelayMs: 1 })
+      ).rejects.toThrow("HTTP 401");
+      expect(calls).toBe(1);
+    });
+
     test("should succeed on first attempt if no error", async () => {
       let calls = 0;
       const res = await retryWithBackoff(async () => {

@@ -5,6 +5,10 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
 import { extractFast, extractDeep, extractStructured, batchExtract } from "./extractor.js";
 import { getCachedPage, setCachedPage } from "./cache.js";
+import { buildCacheKey } from "./cache.js";
+import { validateTargetUrl } from "./security.js";
+import { getMetrics, recordMetric } from "./metrics.js";
+import { closeBrowsers } from "./browser-manager.js";
 
 /**
  * Initialize the LookaCrawler MCP Server
@@ -57,10 +61,13 @@ server.registerTool(
   },
   async ({ url, mode, css_selector, headers, cookies, proxy, max_retries }) => {
     try {
+      await validateTargetUrl(url);
       const bypassCache = Boolean(headers || cookies || proxy);
+      const cacheKey = buildCacheKey({ url, mode, cssSelector: css_selector });
       if (!bypassCache) {
-        const cached = getCachedPage(url);
-        if (cached) {
+        const cached = getCachedPage(cacheKey);
+        if (cached !== null) {
+          recordMetric("cacheHits");
           return {
             content: [
               {
@@ -96,7 +103,7 @@ server.registerTool(
       }
 
       if (!bypassCache) {
-        setCachedPage(url, markdown);
+        setCachedPage(cacheKey, markdown);
       }
 
       return {
@@ -245,6 +252,20 @@ server.registerTool(
   },
   async ({ url, schema, include_metadata, mode, css_selector, headers, cookies, proxy, max_retries }) => {
     try {
+      await validateTargetUrl(url);
+      const bypassCache = Boolean(headers || cookies || proxy);
+      const cacheKey = buildCacheKey({
+        url,
+        mode,
+        cssSelector: css_selector,
+        variant: { schema, include_metadata },
+      });
+      if (!bypassCache) {
+        const cached = getCachedPage(cacheKey);
+        if (cached !== null) {
+          return { content: [{ type: "text", text: cached }] };
+        }
+      }
       const structuredResult = await extractStructured({
         url,
         mode,
@@ -257,11 +278,13 @@ server.registerTool(
         maxRetries: max_retries,
       });
 
+      const output = JSON.stringify(structuredResult, null, 2);
+      if (!bypassCache) setCachedPage(cacheKey, output);
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(structuredResult, null, 2),
+            text: output,
           },
         ],
       };
@@ -305,9 +328,27 @@ async function main() {
 
   if (transportMode === "sse") {
     let sseTransport: SSEServerTransport | null = null;
+    const token = process.env.LOOKACRAWLER_SSE_TOKEN;
     const httpServer = createServer(async (req, res) => {
+      if (token && req.headers.authorization !== `Bearer ${token}`) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
       const url = new URL(req.url || "", `http://${req.headers.host || "localhost"}`);
-      if (url.pathname === "/sse") {
+      if (url.pathname === "/health" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", metrics: getMetrics() }));
+      } else if (url.pathname === "/metrics" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(getMetrics()));
+      } else if (url.pathname === "/sse") {
+        if (sseTransport) {
+          res.writeHead(409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "An SSE session is already active" }));
+          return;
+        }
+        res.on("close", () => { sseTransport = null; });
         sseTransport = new SSEServerTransport("/messages", res);
         await server.connect(sseTransport);
       } else if (url.pathname === "/messages" && req.method === "POST") {
@@ -323,8 +364,9 @@ async function main() {
       }
     });
 
-    httpServer.listen(port, () => {
-      console.log(`LookaCrawler MCP Server listening on SSE transport at http://localhost:${port}/sse`);
+    const host = process.env.HOST || "127.0.0.1";
+    httpServer.listen(port, host, () => {
+      console.log(`LookaCrawler MCP Server listening on SSE transport at http://${host}:${port}/sse`);
     });
   } else {
     const transport = new StdioServerTransport();
@@ -337,3 +379,6 @@ main().catch((error) => {
   console.error("Fatal error starting LookaCrawler MCP server:", error);
   process.exit(1);
 });
+
+process.once("SIGINT", () => void closeBrowsers().finally(() => process.exit(0)));
+process.once("SIGTERM", () => void closeBrowsers().finally(() => process.exit(0)));
