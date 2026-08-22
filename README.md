@@ -12,10 +12,11 @@ LookaCrawler is a token-optimized local **Model Context Protocol (MCP) Server** 
 
 - **Token Economy First:** Achieves **>73% token reduction** by automatically pruning scripts, stylesheets, inline styles, SVGs, images, navigation bars, footers, forms, and tracking noise before delivering content to LLMs.
 - **Hybrid Crawling Engine:**
-  - `fast`: Native HTTP GET request with retry backoff for rapid static site extraction.
-  - `deep`: Headless Playwright Chromium engine with stealth plugins for dynamic JavaScript SPAs, with strict resource blocking (images, fonts, media, and CSS aborted to save RAM & bandwidth).
+  - `fast`: Native HTTP GET request with retry backoff for rapid static site extraction. When the site's anti-bot layer rejects it, it **auto-escalates to `deep`** automatically (no flags needed).
+  - `deep`: Headless Playwright engine driving **your real Google Chrome** (falls back to bundled Chromium if absent) with **stealth fingerprint patches** so Cloudflare/CAPTCHA challenges see a "human-like" browser, not a headless one. Strict resource blocking (images, fonts, media, CSS aborted) saves RAM & bandwidth.
+- **Cloudflare & Stealth:** Per-page stealth init script patches `navigator.webdriver`, plugins, languages, `window.chrome`, WebGL vendor/renderer, permissions and strips CDP/devtools leaks — so pages that block headless bots (Cloudflare, DDoS-Guard, reCAPTCHA, hCaptcha, Turnstile) still deliver real content. `fast`→`deep` escalation is automatic on anti-bot detection.
 - **Resilience & Anti-Bot Protection:**
-  - **Cloudflare & CAPTCHA Detection:** Automatically detects anti-bot challenges and rate limits.
+  - **Cloudflare & CAPTCHA Detection:** Automatically detects anti-bot challenges and rate limits. Challenge markers are matched precisely — a real page that merely references `cloudflare` in a CDN/config URL is **not** wrongly rejected (no false positives).
   - **Per-Domain Rate Limiting:** Built-in domain throttling to prevent IP blocks and server overload.
   - **Exponential Backoff Retries:** Retries transient network failures and 5xx errors with customizable retry attempts (`max_retries`).
 - **Proxying & Custom Headers/Cookies:**
@@ -29,13 +30,27 @@ LookaCrawler is a token-optimized local **Model Context Protocol (MCP) Server** 
 
 ---
 
+## Stealth & Cloudflare Bypass
+
+Sites behind Cloudflare, DDoS-Guard, reCAPTCHA, hCaptcha or Turnstile detect headless automation by fingerprinting the browser JS surface. LookaCrawler's `deep` mode counters this with a **per-page stealth init script** (see `stealth.ts`) that runs before any page script:
+
+- Clears `navigator.webdriver` (the #1 headless giveaway).
+- Spoofs `navigator.plugins`, `navigator.languages`, `navigator.language` and device signals.
+- Recreates the `window.chrome` object (present in real Chrome, absent in headless Chromium).
+- Unwraps WebGL vendor/renderer and normalizes `permissions.query`.
+- Strips CDP/devtools leak globals (`_phantom`, `__nightmare`, `callPhantom`).
+
+`deep` launches your **real Google Chrome** (`channel: "chrome"`) for the most human-like TLS/HTTP2 fingerprint, degrading to bundled Chromium when Chrome is not installed. When the fast fetch hits an anti-bot challenge, the `fast` path **automatically escalates to `deep`** — no extra flags required — so the default extract call returns real content instead of an empty or blocked result. The anti-bot detector was also tightened so a legitimately-loaded page that merely mentions `cloudflare` (e.g. a `cdnjs.cloudflare.com` link) is no longer rejected.
+
+---
+
 ## Tech Stack
 
 - **Runtime:** [Bun](https://bun.sh) (with native `bun:sqlite` and `bun:test`)
 - **Protocol:** `@modelcontextprotocol/sdk`
 - **Article Extraction:** `@mozilla/readability` + `jsdom`
 - **Markdown Conversion:** `turndown`
-- **Headless Browser:** `playwright` with a reusable browser pool
+- **Headless Browser:** `playwright` with a reusable browser pool (real Chrome preferred)
 
 ---
 

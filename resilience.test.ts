@@ -19,7 +19,15 @@ describe("Resilience Module (resilience.ts)", () => {
       const cfHtml = "<html><head><title>Just a moment...</title></head><body>cf-browser-verification</body></html>";
       const result = detectAntiBot(200, cfHtml);
       expect(result.isBlocked).toBe(true);
-      expect(result.reason).toContain("cf-browser-verification");
+      expect(result.reason?.toLowerCase()).toContain("just a moment");
+    });
+
+    test("should NOT treat a real page that merely references 'cloudflare' as blocked", () => {
+      // A legitimately-loaded page that references cloudflare CDN/config must not be
+      // rejected — this is the false-positive regression (n8n.io / FB-docs).
+      const realPage = "<html><head><title>AI Workflow Automation Platform - n8n</title></head><body>Hosted via <a href='https://cdnjs.cloudflare.com/...'>cdn</a> and <script src='https://cloudflare.com/run.js'></script></body></html>";
+      const result = detectAntiBot(200, realPage);
+      expect(result.isBlocked).toBe(false);
     });
 
     test("should detect Turnstile and hCaptcha signatures", () => {

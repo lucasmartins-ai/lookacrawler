@@ -6,6 +6,8 @@ export interface CrawlMetrics {
   retries: number;
   bytesFetched: number;
   durationMs: number;
+  /** Number of times a fast fetch was blocked and escalated to deep/stealth. */
+  escalations: number;
 }
 
 const metrics: CrawlMetrics = {
@@ -16,6 +18,7 @@ const metrics: CrawlMetrics = {
   retries: 0,
   bytesFetched: 0,
   durationMs: 0,
+  escalations: 0,
 };
 
 export function recordMetric<K extends keyof CrawlMetrics>(key: K, value = 1): void {

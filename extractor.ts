@@ -8,7 +8,7 @@ import {
   retryWithBackoff,
   type AntiBotCheckResult,
 } from "./resilience.js";
-import { getBrowser } from "./browser-manager.js";
+import { getBrowser, getStealthInit } from "./browser-manager.js";
 import { getMaxResponseBytes, validateTargetUrl } from "./security.js";
 import { buildCacheKey, getCachedPage, setCachedPage } from "./cache.js";
 import { recordMetric } from "./metrics.js";
@@ -249,6 +249,25 @@ async function extractFastOnce(options: FastExtractOptions): Promise<string> {
     recordMetric("durationMs", Date.now() - startedAt);
     return result;
   } catch (error) {
+    // Escalate to stealth/real-browser (deep) when the quick fetch is blocked.
+    // Bun's native fetch has a detectable TLS/HTTP2 fingerprint, so Cloudflare
+    // (and similar) stop it. A real browser (or a robust proxy) is more likely
+    // to pass — without this, the default `fast` path silently returns 0 bytes.
+    const message = error instanceof Error ? error.message : String(error);
+    const antiBot = /Anti-Bot protection/i.test(message) || /cloudflare/i.test(message) || /just a moment/i.test(message);
+    if (antiBot) {
+      recordMetric("escalations");
+      console.error(`[lookacrawler] fast blocked by anti-bot (${message.slice(0, 90)}); escalating to deep/stealth...`);
+      return extractDeep({
+        url,
+        cssSelector,
+        timeoutMs,
+        headers,
+        cookies,
+        proxy,
+        maxRetries: Math.max(1, maxRetries - 1),
+      });
+    }
     recordMetric("failures");
     recordMetric("durationMs", Date.now() - startedAt);
     throw error;
@@ -522,6 +541,10 @@ export async function fetchRawHtml(
             locale: "en-US",
             timezoneId: "Europe/London",
           });
+
+          // Stealth: patch the JS fingerprint before any page script runs, so
+          // Cloudflare sees a "human-like" surface instead of a headless one.
+          await context.addInitScript(getStealthInit());
           if (headers) await context.setExtraHTTPHeaders(headers);
           if (cookies && Object.keys(cookies).length > 0) {
             const parsedUrl = new URL(url);

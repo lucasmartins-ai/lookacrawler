@@ -8,13 +8,21 @@ export interface AntiBotCheckResult {
 }
 
 /**
- * Common Cloudflare and CAPTCHA challenge signatures in HTML/headers
+ * Common Cloudflare/CAPTCHA challenge markers. These must identify an actual
+ * CHALLENGE / interstitial page, NOT a site that merely references "cloudflare"
+ * in a CDN URL or config string — otherwise a real, fully-loaded page is
+ * rejected as a false positive (the bug that made n8n/FB-docs fail even though
+ * the real content rendered). Prefer markers unique to the challenge page.
  */
 const ANTI_BOT_SIGNATURES = [
-  "cf-browser-verification",
-  "cloudflare",
+  // Cloudflare challenge interstitial (title/body of the JS-check page).
   "just a moment...",
   "attention required!",
+  "checking your browser before accessing",
+  "verify you are human",
+  "cf-browser-verification",
+  "cf-chl-",
+  // Dedicated bot-protection products.
   "ddos-guard",
   "g-recaptcha",
   "hcaptcha",
@@ -23,6 +31,9 @@ const ANTI_BOT_SIGNATURES = [
   "access denied",
   "robot check",
   "security check",
+  // Cloudflare's "Verify you are human" turnstile gate.
+  "cf-turnstile-widget",
+  "cloudflarecaptcha",
 ];
 
 /**

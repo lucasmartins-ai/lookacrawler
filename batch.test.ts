@@ -46,7 +46,9 @@ describe("Batch Extraction (extractor.ts)", () => {
     (globalThis as any).fetch = async (url: any) => {
       const urlStr = String(url);
       if (urlStr.includes("error")) {
-        return new Response("Forbidden", { status: 403 });
+        // A genuine "not found" page (not an anti-bot block) — must NOT escalate
+        // to a real browser, so the test stays hermetic.
+        return new Response("404 Not Found", { status: 404 });
       }
       return new Response("<html><body><h1>Valid Page</h1></body></html>", { status: 200 });
     };
