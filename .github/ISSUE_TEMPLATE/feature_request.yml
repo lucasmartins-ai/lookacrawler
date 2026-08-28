@@ -1,0 +1,27 @@
+name: 💡 Feature Request / Enhancement
+description: Suggest a new idea, integration, or optimization
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We welcome community ideas and feature contributions!
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: Feature Description
+      description: Clear explanation of the proposed feature or improvement.
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Problem & Use Case
+      description: What problem does this feature solve in your workflow?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Implementation (Optional)
+      description: Any architectural thoughts, API signature, or references.
