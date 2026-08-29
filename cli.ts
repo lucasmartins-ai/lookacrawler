@@ -24,6 +24,7 @@ Options for 'extract':
   --proxy <url>               HTTP/SOCKS5 proxy URL.
   --max-retries <n>           Maximum retry attempts (default: 3).
   --json                      Output formatted JSON response with statistics.
+  --jina-format               Output Jina Reader-compatible metadata headers.
   --no-cache                  Bypass local SQLite cache.
 
 Options for 'batch':
@@ -84,6 +85,7 @@ async function runCli() {
     const proxy = getOption(args, "--proxy");
     const maxRetries = getOption(args, "--max-retries") ? parseInt(getOption(args, "--max-retries")!, 10) : 3;
     const isJson = args.includes("--json");
+    const jinaFormat = args.includes("--jina-format");
     const noCache = args.includes("--no-cache");
     const { extractFast, extractDeep } = await import("./extractor.js");
     const { buildCacheKey, getCachedPage, setCachedPage } = await import("./cache.js");
@@ -96,7 +98,7 @@ async function runCli() {
         if (isJson) {
           console.log(JSON.stringify({ url, mode, cached: true, content: cached }, null, 2));
         } else {
-          console.log(cached);
+          console.log(jinaFormat ? (await import("./jina-format.js")).formatJinaReader(url, cached) : cached);
         }
         return;
       }
@@ -115,7 +117,7 @@ async function runCli() {
       if (isJson) {
         console.log(JSON.stringify({ url, mode, cached: false, content: markdown, byteLength: Buffer.byteLength(markdown, "utf8") }, null, 2));
       } else {
-        console.log(markdown);
+        console.log(jinaFormat ? (await import("./jina-format.js")).formatJinaReader(url, markdown) : markdown);
       }
     } catch (err: any) {
       console.error(`Extraction error: ${err.message || err}`);
