@@ -3,9 +3,18 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
-import { extractFast, extractDeep, extractStructured, batchExtract } from "./extractor.js";
-import { getCachedPage, setCachedPage } from "./cache.js";
-import { buildCacheKey } from "./cache.js";
+import {
+  extractFast,
+  extractDeep,
+  extractStructured,
+  batchExtract,
+  mapWebsite,
+  crawlWebsite,
+  type LinkFormat,
+  type ImageMode,
+  type PageAction,
+} from "./extractor.js";
+import { getCachedPage, setCachedPage, buildCacheKey, db } from "./cache.js";
 import { validateTargetUrl } from "./security.js";
 import { getMetrics, recordMetric } from "./metrics.js";
 import { closeBrowsers } from "./browser-manager.js";
@@ -21,6 +30,10 @@ const server = new McpServer({
 /**
  * Define the `extract_web_content` tool
  */
+function hasEntries(obj?: Record<string, any>): boolean {
+  return Boolean(obj && Object.keys(obj).length > 0);
+}
+
 server.registerTool(
   "extract_web_content",
   {
@@ -69,13 +82,41 @@ Markdown text. Cache hits are prefixed with a NOTE marker. Unsupported URLs (non
         .max(10)
         .optional()
         .describe("Maximum retry attempts for transient errors or rate limits (default: 3)."),
+      link_format: z
+        .enum(["inline", "references", "strip"])
+        .default("inline")
+        .optional()
+        .describe("Link formatting: 'inline' ([text](url)), 'references' ([text][1] footnote citations at end), or 'strip' (plain text). Default: inline."),
+      image_mode: z
+        .enum(["ignore", "alt_only", "markdown"])
+        .default("ignore")
+        .optional()
+        .describe("Image handling: 'ignore' (omit images), 'alt_only' (> 🖼️ *[Imagem: alt]*), or 'markdown' (![alt](src)). Default: ignore."),
+      actions: z
+        .array(
+          z.object({
+            type: z.enum(["click", "scroll", "wait", "fill"]).describe("Action type"),
+            selector: z.string().optional().describe("CSS selector for click/fill"),
+            direction: z.enum(["up", "down"]).optional().describe("Scroll direction"),
+            pixels: z.number().optional().describe("Pixels to scroll"),
+            milliseconds: z.number().optional().describe("Milliseconds to wait"),
+            value: z.string().optional().describe("Text value to fill into input"),
+          })
+        )
+        .optional()
+        .describe("Optional pre-crawl automation actions for mode='deep' (e.g. click cookie consent, load more, scrolling)."),
     },
   },
-  async ({ url, mode, css_selector, headers, cookies, proxy, max_retries }) => {
+  async ({ url, mode, css_selector, headers, cookies, proxy, max_retries, link_format, image_mode, actions }) => {
     try {
       await validateTargetUrl(url);
-      const bypassCache = Boolean(headers || cookies || proxy);
-      const cacheKey = buildCacheKey({ url, mode, cssSelector: css_selector });
+      const bypassCache = Boolean(hasEntries(headers) || hasEntries(cookies) || proxy || actions?.length);
+      const cacheKey = buildCacheKey({
+        url,
+        mode,
+        cssSelector: css_selector,
+        variant: { link_format, image_mode },
+      });
       if (!bypassCache) {
         const cached = getCachedPage(cacheKey);
         if (cached !== null) {
@@ -100,6 +141,8 @@ Markdown text. Cache hits are prefixed with a NOTE marker. Unsupported URLs (non
           cookies,
           proxy,
           maxRetries: max_retries,
+          linkFormat: link_format,
+          imageMode: image_mode,
         });
       } else if (mode === "deep") {
         markdown = await extractDeep({
@@ -109,6 +152,9 @@ Markdown text. Cache hits are prefixed with a NOTE marker. Unsupported URLs (non
           cookies,
           proxy,
           maxRetries: max_retries,
+          linkFormat: link_format,
+          imageMode: image_mode,
+          actions,
         });
       } else {
         throw new Error(`Unsupported mode: ${mode}`);
@@ -287,7 +333,7 @@ JSON object with the requested fields (and/or metadata). Missing selectors are o
   async ({ url, schema, include_metadata, mode, css_selector, headers, cookies, proxy, max_retries }) => {
     try {
       await validateTargetUrl(url);
-      const bypassCache = Boolean(headers || cookies || proxy);
+      const bypassCache = Boolean(hasEntries(headers) || hasEntries(cookies) || proxy);
       const cacheKey = buildCacheKey({
         url,
         mode,
@@ -297,6 +343,7 @@ JSON object with the requested fields (and/or metadata). Missing selectors are o
       if (!bypassCache) {
         const cached = getCachedPage(cacheKey);
         if (cached !== null) {
+          recordMetric("cacheHits");
           return { content: [{ type: "text", text: cached }] };
         }
       }
@@ -337,12 +384,189 @@ JSON object with the requested fields (and/or metadata). Missing selectors are o
 );
 
 /**
+ * Define the `map_website` tool
+ */
+server.registerTool(
+  "map_website",
+  {
+    description: `Discover the architecture and page inventory of a website domain via sitemaps, robots.txt, and link graphs.
+Returns a list of URLs with source and modification metadata. Useful for exploring a site before targeted crawling.`,
+    inputSchema: {
+      url: z.string().url().describe("Target website URL or domain root (e.g. 'https://example.com')."),
+      max_links: z.number().int().min(1).max(500).default(100).optional().describe("Maximum number of links to discover (default: 100)."),
+    },
+  },
+  async ({ url, max_links }) => {
+    try {
+      const result = await mapWebsite({ url, maxLinks: max_links });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error: any) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Map website failed: ${error.message || String(error)}` }],
+      };
+    }
+  }
+);
+
+/**
+ * Define the `crawl_website` tool
+ */
+server.registerTool(
+  "crawl_website",
+  {
+    description: `Recursively crawl an entire website or documentation section with depth limits, route regex filtering, and token accounting.`,
+    inputSchema: {
+      start_url: z.string().url().describe("Root URL to start the recursive crawl from."),
+      max_depth: z.number().int().min(1).max(5).default(2).optional().describe("Maximum link traversal depth (default: 2)."),
+      max_pages: z.number().int().min(1).max(20).default(5).optional().describe("Maximum total pages to crawl (default: 5, max: 20)."),
+      include_patterns: z.array(z.string()).optional().describe("Regex patterns that candidate URLs must match (e.g. ['/docs/'])."),
+      exclude_patterns: z.array(z.string()).optional().describe("Regex patterns for URLs to ignore (e.g. ['/login', '/tags/'])."),
+      mode: z.enum(["fast", "deep"]).default("fast").describe("Crawl mode ('fast' native fetch or 'deep' Playwright browser)."),
+      link_format: z.enum(["inline", "references", "strip"]).default("inline").optional().describe("Formatting of extracted hyperlinks."),
+      image_mode: z.enum(["ignore", "alt_only", "markdown"]).default("ignore").optional().describe("Formatting of images."),
+    },
+  },
+  async ({ start_url, max_depth, max_pages, include_patterns, exclude_patterns, mode, link_format, image_mode }) => {
+    try {
+      const result = await crawlWebsite({
+        startUrl: start_url,
+        maxDepth: max_depth,
+        maxPages: max_pages,
+        includePatterns: include_patterns,
+        excludePatterns: exclude_patterns,
+        mode,
+        linkFormat: link_format,
+        imageMode: image_mode,
+      });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error: any) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Crawl website failed: ${error.message || String(error)}` }],
+      };
+    }
+  }
+);
+
+/**
+ * Register MCP Resources
+ */
+server.registerResource(
+  "crawler_metrics",
+  "crawler://metrics",
+  {
+    title: "LookaCrawler Performance Metrics",
+    description: "Live performance, byte count, request status, and cache statistics",
+    mimeType: "application/json",
+  },
+  async () => ({
+    contents: [
+      {
+        uri: "crawler://metrics",
+        mimeType: "application/json",
+        text: JSON.stringify(getMetrics(), null, 2),
+      },
+    ],
+  })
+);
+
+server.registerResource(
+  "cache_stats",
+  "crawler://cache/stats",
+  {
+    title: "LookaCrawler Cache Statistics",
+    description: "Statistics of cached pages in the local SQLite WAL database",
+    mimeType: "application/json",
+  },
+  async () => {
+    let totalCached = 0;
+    try {
+      const row = db.query<{ count: number }, []>("SELECT COUNT(*) as count FROM pages").get();
+      totalCached = row?.count || 0;
+    } catch {
+      /* ignore */
+    }
+    return {
+      contents: [
+        {
+          uri: "crawler://cache/stats",
+          mimeType: "application/json",
+          text: JSON.stringify(
+            {
+              totalCachedPages: totalCached,
+              ttlHours: 24,
+              journalMode: "WAL",
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
+/**
+ * Register MCP Prompts
+ */
+server.registerPrompt(
+  "crawl-and-summarize",
+  {
+    title: "Crawl & Summarize Website",
+    description: "Extract clean Markdown from a target URL and generate a high-density executive summary",
+    argsSchema: {
+      url: z.string().url().describe("Target website URL to extract and summarize"),
+    },
+  },
+  async ({ url }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `Please use the extract_web_content tool to crawl "${url}". Once extracted, produce a comprehensive executive summary in bullet points, highlighting key takeaways, architectural decisions, and important data points.`,
+        },
+      },
+    ],
+  })
+);
+
+server.registerPrompt(
+  "compare-pages",
+  {
+    title: "Compare Two Web Pages",
+    description: "Crawl two URLs concurrently and produce a comparative matrix",
+    argsSchema: {
+      url_a: z.string().url().describe("First URL"),
+      url_b: z.string().url().describe("Second URL"),
+    },
+  },
+  async ({ url_a, url_b }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `Please use the batch_extract_web_content tool to extract "${url_a}" and "${url_b}". Then, create a detailed side-by-side comparison table comparing features, pricing, architecture, and value proposition.`,
+        },
+      },
+    ],
+  })
+);
+
+/**
  * Start input/output transport for MCP client communication (stdio or SSE HTTP)
  */
 async function main() {
   const args = process.argv.slice(2);
   let transportMode = "stdio";
   let port = 3000;
+  let host = process.env.HOST || "127.0.0.1";
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--transport=sse" || args[i] === "--sse") {
@@ -357,6 +581,11 @@ async function main() {
       i++;
     } else if (args[i].startsWith("--port=")) {
       port = parseInt(args[i].split("=")[1], 10);
+    } else if (args[i] === "--host" && args[i + 1]) {
+      host = args[i + 1];
+      i++;
+    } else if (args[i].startsWith("--host=")) {
+      host = args[i].split("=")[1];
     }
   }
 
@@ -364,6 +593,17 @@ async function main() {
     let sseTransport: SSEServerTransport | null = null;
     const token = process.env.LOOKACRAWLER_SSE_TOKEN;
     const httpServer = createServer(async (req, res) => {
+      // Set permissive CORS headers for web agents and frontends
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+      if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
       if (token && req.headers.authorization !== `Bearer ${token}`) {
         res.writeHead(401, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Unauthorized" }));
@@ -398,7 +638,6 @@ async function main() {
       }
     });
 
-    const host = process.env.HOST || "127.0.0.1";
     httpServer.listen(port, host, () => {
       console.log(`LookaCrawler MCP Server listening on SSE transport at http://${host}:${port}/sse`);
     });
