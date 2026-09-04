@@ -28,9 +28,12 @@ Web crawling for Large Language Models (LLMs) is broken by default: modern web p
 | Feature | 🕷️ LookaCrawler | 🔥 Firecrawl (Cloud) | ⚡ Jina Reader |
 | :--- | :---: | :---: | :---: |
 | **Pricing / Cost** | **$0.00 (100% Free Open Source)** | $16 to $99+/month | Rate-limited API |
-| **Token Reduction** | **>73% to 90% aggressive pruning** | Standard Markdown | Basic Markdown |
+| **Token Reduction** | **>73% to 90% pruning + Footnotes** | Standard Markdown | Basic Markdown |
+| **Autonomous Crawling** | **Native `map` & `crawl` (BFS + Regex)** | Cloud Crawler | Single-page only |
+| **Pre-Crawl Actions** | **Native Playwright (click, scroll, fill)** | Paid Addon | None |
+| **Link Formatting** | **Inline, References Footnotes, Strip** | Inline only | Inline only |
 | **Data Privacy** | **100% Local (Zero Telemetry)** | Cloud Provider | Cloud API |
-| **MCP Integration** | **Native 1-Click Server (stdio & SSE)** | Community Wrapper | None |
+| **MCP Integration** | **Native Tools + Resources + Prompts** | Community Wrapper | None |
 | **Stealth & Anti-Bot** | **Real Chrome + Stealth Fingerprint** | Cloud Proxies | Basic Headers |
 | **Local SQLite Cache** | **Built-in (24h TTL cache)** | Redis / Paid Addon | None |
 | **JS SPA Support** | **Playwright + Chrome Pool** | Cloud Headless | Headless |
@@ -39,11 +42,21 @@ Web crawling for Large Language Models (LLMs) is broken by default: modern web p
 
 ## 🚀 Key Features
 
-- **Token Economy First:** Automatically prunes scripts, styles, inline SVGs, tracking tags, navigations, footers, and redundant forms before passing Markdown to your LLM.
+- **Token Economy First:** Automatically prunes scripts, styles, inline SVGs, tracking tags, navigations, footers, redundant forms, and boilerplate containers with high link density (>80%).
+- **Advanced Link & Image Formatting:**
+  - `link_format`: Choose between `inline` (standard markdown), `references` (footnote citations `[1]`, saving ~25% tokens on repetitive URLs), or `strip` (pure text).
+  - `image_mode`: Choose between `ignore` (zero tokens), `alt_only` (preserves semantic context without URL bloat), or `markdown` (full `![alt](url)`).
+- **Autonomous Mapping & Recursive Crawling:**
+  - `map_website`: Inspects `/robots.txt`, sitemaps, and root anchors to discover all pages in a domain.
+  - `crawl_website`: Breadth-first autonomous crawling with max depth, max pages, route regex filters, and real-time token accounting.
+- **Pre-Crawl Browser Actions:** Automate clicks, scrolls, typing, and waits in Playwright before extracting content (dismiss cookie banners, scroll for infinite loading, expand accordions).
 - **Dual Hybrid Crawling Engine:**
   - `fast`: Ultra-fast native HTTP GET with backoff. Auto-escalates to `deep` if an anti-bot challenge is encountered.
   - `deep`: Headless Playwright engine launching real Google Chrome with stealth patches (`navigator.webdriver` cleared, WebGL spoofed, CDP leaks stripped) to transparently crawl Cloudflare/Turnstile-protected pages.
-- **Native MCP Server Protocol:** JSON-RPC 2.0 stdio and SSE transports ready for Claude Desktop, Cursor, Windsurf, and Antigravity.
+- **Native MCP Ecosystem:**
+  - **Tools:** `extract_web_content`, `crawl_website`, `map_website`, `batch_extract_web_content`, `extract_structured_data`.
+  - **Resources:** Live telemetry at `crawler://metrics` and cache analytics at `crawler://cache/stats`.
+  - **Prompts:** Pre-engineered templates `crawl-and-summarize` and `compare-pages`.
 - **Local SQLite Caching:** Stores extracted Markdown in `crawler_cache.sqlite` to eliminate duplicate network calls.
 - **Structured JSON & Metadata Extraction:** Extracts Open Graph tags (`og:title`, `og:description`), publication dates, canonical URLs, and custom CSS selectors.
 
@@ -73,7 +86,7 @@ Now you can prompt Claude or Cursor:
 
 ### 1. Installation
 
-Requires **Bun 1.1+** (or Node.js 20+):
+Requires **Bun 1.1+** (high-performance runtime with native SQLite):
 
 ```bash
 # Clone the repository
@@ -87,11 +100,17 @@ bun install
 ### 2. CLI Commands
 
 ```bash
-# Single URL fast Markdown extraction
-bun run cli.ts extract https://news.ycombinator.com --mode fast
+# Single URL fast Markdown extraction with reference footnotes
+bun run cli.ts extract https://example.com --link-format references --output page.md
 
 # Headless Playwright deep extraction with CSS selector target
 bun run cli.ts extract https://example.com --mode deep --selector "main" --json
+
+# Discover all website URLs and sitemaps
+bun run cli.ts map https://example.com --max-urls 500
+
+# Recursively crawl documentation with regex filtering and token accounting
+bun run cli.ts crawl https://example.com/docs --max-depth 2 --max-pages 15 --link-format references
 
 # Batch concurrent multi-URL crawling
 bun run cli.ts batch https://site1.com https://site2.com --concurrency 4

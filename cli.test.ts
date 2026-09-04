@@ -20,4 +20,14 @@ describe("LookaCrawler CLI Suite", () => {
     expect(proc.status).toBe(1);
     expect(proc.stderr).toContain("Error: Missing target URL");
   });
+
+  test("lookacrawler extract correctly parses URL when flags precede it", () => {
+    const proc = spawnSync(
+      "bun",
+      ["run", "cli.ts", "extract", "--mode", "fast", "--no-cache", "https://example.com"],
+      { encoding: "utf8" }
+    );
+    expect(proc.status).toBe(0);
+    expect(proc.stdout).toContain("example");
+  });
 });

@@ -2,6 +2,7 @@ import { processHtmlToMarkdown } from "./extractor.js";
 
 /**
  * Benchmark token & byte reduction of LookaCrawler HTML-to-Markdown optimization pipeline
+ * across Default Mode, Footnote References Mode, and Strip Mode.
  */
 function runBenchmark() {
   const sampleVerboseHtml = `
@@ -65,9 +66,9 @@ function runBenchmark() {
       <div class="sidebar">
         <h3>Trending Topics</h3>
         <ul>
-          <li><a href="#">TypeScript 7.0 Features</a></li>
-          <li><a href="#">Bun 1.3 Optimization Tips</a></li>
-          <li><a href="#">AI Agents in Enterprise Workflows</a></li>
+          <li><a href="https://example.com/topic/typescript">TypeScript 5.7 Features</a></li>
+          <li><a href="https://example.com/topic/bun">Bun 1.3 Optimization Tips</a></li>
+          <li><a href="https://example.com/topic/agents">AI Agents in Enterprise Workflows</a></li>
         </ul>
         <form action="/newsletter" method="post">
           <h4>Subscribe to Newsletter</h4>
@@ -89,30 +90,55 @@ function runBenchmark() {
   const rawBytes = Buffer.byteLength(sampleVerboseHtml, "utf-8");
   const rawApproxTokens = Math.ceil(sampleVerboseHtml.length / 4);
 
-  const markdownResult = processHtmlToMarkdown(sampleVerboseHtml, {
+  // 1. Default LookaCrawler Pipeline (Inline + Ignore Images)
+  const defaultMd = processHtmlToMarkdown(sampleVerboseHtml, {
     url: "https://example.com/benchmark-article",
   });
+  const defaultBytes = Buffer.byteLength(defaultMd, "utf-8");
+  const defaultTokens = Math.ceil(defaultMd.length / 4);
+  const defaultTokenRed = (((rawApproxTokens - defaultTokens) / rawApproxTokens) * 100).toFixed(2);
+  const defaultByteRed = (((rawBytes - defaultBytes) / rawBytes) * 100).toFixed(2);
 
-  const markdownBytes = Buffer.byteLength(markdownResult, "utf-8");
-  const markdownApproxTokens = Math.ceil(markdownResult.length / 4);
+  // 2. Footnote References Mode (High-Density Link Optimization)
+  const refMd = processHtmlToMarkdown(sampleVerboseHtml, {
+    url: "https://example.com/benchmark-article",
+    linkFormat: "references",
+    imageMode: "alt_only",
+  });
+  const refBytes = Buffer.byteLength(refMd, "utf-8");
+  const refTokens = Math.ceil(refMd.length / 4);
+  const refTokenRed = (((rawApproxTokens - refTokens) / rawApproxTokens) * 100).toFixed(2);
+  const refByteRed = (((rawBytes - refBytes) / rawBytes) * 100).toFixed(2);
 
-  const byteReductionPercentage = (((rawBytes - markdownBytes) / rawBytes) * 100).toFixed(2);
-  const tokenReductionPercentage = (((rawApproxTokens - markdownApproxTokens) / rawApproxTokens) * 100).toFixed(2);
+  // 3. Strip Mode (Pure Semantic Text)
+  const stripMd = processHtmlToMarkdown(sampleVerboseHtml, {
+    url: "https://example.com/benchmark-article",
+    linkFormat: "strip",
+    imageMode: "ignore",
+  });
+  const stripBytes = Buffer.byteLength(stripMd, "utf-8");
+  const stripTokens = Math.ceil(stripMd.length / 4);
+  const stripTokenRed = (((rawApproxTokens - stripTokens) / rawApproxTokens) * 100).toFixed(2);
+  const stripByteRed = (((rawBytes - stripBytes) / rawBytes) * 100).toFixed(2);
 
-  console.log("=== LookaCrawler Token Optimization Benchmark ===");
-  console.log(`Raw HTML Size:           ${rawBytes} bytes (~${rawApproxTokens} tokens)`);
-  console.log(`Extracted Markdown Size: ${markdownBytes} bytes (~${markdownApproxTokens} tokens)`);
-  console.log(`Byte Reduction:          ${byteReductionPercentage}%`);
-  console.log(`Token Reduction:         ${tokenReductionPercentage}%`);
-  console.log("------------------------------------------------");
-  console.log("Extracted Markdown Preview:");
-  console.log(markdownResult.slice(0, 300) + "...\n");
+  console.log("================================================================================");
+  console.log("           🚀 LOOKACRAWLER TOKEN OPTIMIZATION MULTI-MODE BENCHMARK              ");
+  console.log("================================================================================");
+  console.log(`Raw HTML Input:            ${rawBytes} bytes (~${rawApproxTokens} tokens)`);
+  console.log("--------------------------------------------------------------------------------");
+  console.log(`1. Default Pipeline:       ${defaultBytes} bytes (~${defaultTokens} tokens) -> ${defaultTokenRed}% token reduction (${defaultByteRed}% bytes)`);
+  console.log(`2. References Footnotes:   ${refBytes} bytes (~${refTokens} tokens) -> ${refTokenRed}% token reduction (${refByteRed}% bytes)`);
+  console.log(`3. Strip Mode (Pure Text): ${stripBytes} bytes (~${stripTokens} tokens) -> ${stripTokenRed}% token reduction (${stripByteRed}% bytes)`);
+  console.log("--------------------------------------------------------------------------------");
+  console.log("Extracted Markdown Preview (Default Mode):");
+  console.log(defaultMd.slice(0, 300) + "...\n");
 
-  if (Number(tokenReductionPercentage) >= 70) {
+  if (Number(defaultTokenRed) >= 70) {
     console.log("✅ BENCHMARK SUCCESS: Token reduction exceeds target threshold of 70%!");
   } else {
-    console.log(`⚠️ Benchmark metric: ${tokenReductionPercentage}% reduction achieved.`);
+    console.log(`ℹ️ Benchmark metric: ${defaultTokenRed}% reduction achieved.`);
   }
+  console.log("================================================================================");
 }
 
 runBenchmark();
