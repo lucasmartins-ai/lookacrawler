@@ -21,11 +21,11 @@ const CHALLENGE_SIGNATURES = [
   "cf-browser-verification",
   "cf-chl-",
   "cf-turnstile",
+  // Cloudflare's "Verify you are human" turnstile gate.
   "cf-turnstile-widget",
   "cloudflarecaptcha",
   "challenges.cloudflare.com",
   "ddos-guard",
-  "enable javascript and cookies to continue",
 ];
 
 const CAPTCHA_DOM_MARKERS = [

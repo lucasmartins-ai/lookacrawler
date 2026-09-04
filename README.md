@@ -100,6 +100,9 @@ bun install
 ### 2. CLI Commands
 
 ```bash
+# Single URL fast Markdown extraction
+bun run cli.ts extract https://news.ycombinator.com --mode fast
+
 # Single URL fast Markdown extraction with reference footnotes
 bun run cli.ts extract https://example.com --link-format references --output page.md
 
