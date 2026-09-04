@@ -88,7 +88,8 @@ bun install
 
 ```bash
 # Single URL fast Markdown extraction
-bun run cli.ts extract https://news.ycombinator.com --mode fast
+bun run index extract https://news.ycombinator.com --mode fast
+# (alternative: bun run cli.ts extract ...)
 
 # Headless Playwright deep extraction with CSS selector target
 bun run cli.ts extract https://example.com --mode deep --selector "main" --json
