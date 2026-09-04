@@ -1,3 +1,5 @@
+import { recordMetric } from "./metrics.js";
+
 /**
  * Resilience, Proxying, and Anti-Bot Module for LookaCrawler
  */
@@ -5,54 +7,107 @@
 export interface AntiBotCheckResult {
   isBlocked: boolean;
   reason?: string;
+  isRetryable?: boolean;
 }
 
 /**
- * Common Cloudflare/CAPTCHA challenge markers. These must identify an actual
- * CHALLENGE / interstitial page, NOT a site that merely references "cloudflare"
- * in a CDN URL or config string — otherwise a real, fully-loaded page is
- * rejected as a false positive (the bug that made n8n/FB-docs fail even though
- * the real content rendered). Prefer markers unique to the challenge page.
+ * High-confidence challenge markers that indicate an active anti-bot interstitial.
  */
-const ANTI_BOT_SIGNATURES = [
-  // Cloudflare challenge interstitial (title/body of the JS-check page).
+const CHALLENGE_SIGNATURES = [
   "just a moment...",
   "attention required!",
   "checking your browser before accessing",
   "verify you are human",
   "cf-browser-verification",
   "cf-chl-",
-  // Dedicated bot-protection products.
-  "ddos-guard",
-  "g-recaptcha",
-  "hcaptcha",
   "cf-turnstile",
-  "enable javascript and cookies to continue",
-  "access denied",
-  "robot check",
-  "security check",
-  // Cloudflare's "Verify you are human" turnstile gate.
   "cf-turnstile-widget",
   "cloudflarecaptcha",
+  "challenges.cloudflare.com",
+  "ddos-guard",
+  "enable javascript and cookies to continue",
+];
+
+const CAPTCHA_DOM_MARKERS = [
+  "class=\"cf-turnstile\"",
+  "class='cf-turnstile'",
+  "id=\"cf-turnstile\"",
+  "id='cf-turnstile'",
+  "class=\"g-recaptcha\"",
+  "class='g-recaptcha'",
+  "class=\"h-captcha\"",
+  "class='h-captcha'",
+  "<form id=\"challenge-form\"",
+  "<form id='challenge-form'",
 ];
 
 /**
  * Inspect HTTP status code and HTML body for anti-bot or CAPTCHA blocks.
  */
 export function detectAntiBot(status: number, htmlContent: string): AntiBotCheckResult {
-  if (status === 403 || status === 429 || status === 503) {
+  if (status === 403) {
     return {
       isBlocked: true,
-      reason: `HTTP Status ${status} (Forbidden/Rate Limited/Service Unavailable)`,
+      reason: `HTTP Status 403 (Forbidden / Bot Blocked)`,
+      isRetryable: false,
+    };
+  }
+
+  if (status === 429) {
+    return {
+      isBlocked: true,
+      reason: `HTTP Status 429 (Rate Limited)`,
+      isRetryable: true,
+    };
+  }
+
+  if (status === 503) {
+    return {
+      isBlocked: true,
+      reason: `HTTP Status 503 (Service Unavailable)`,
+      isRetryable: true,
     };
   }
 
   const lowerHtml = htmlContent.toLowerCase();
-  for (const sig of ANTI_BOT_SIGNATURES) {
-    if (lowerHtml.includes(sig.toLowerCase())) {
+
+  // Check high confidence challenge signatures
+  for (const sig of CHALLENGE_SIGNATURES) {
+    if (lowerHtml.includes(sig)) {
       return {
         isBlocked: true,
         reason: `Anti-bot / CAPTCHA signature detected: "${sig}"`,
+        isRetryable: false,
+      };
+    }
+  }
+
+  // Check explicit captcha DOM widgets
+  for (const marker of CAPTCHA_DOM_MARKERS) {
+    if (lowerHtml.includes(marker.toLowerCase())) {
+      return {
+        isBlocked: true,
+        reason: `Interactive CAPTCHA widget detected: "${marker}"`,
+        isRetryable: false,
+      };
+    }
+  }
+
+  // Check page title for standalone block messages
+  const titleMatch = htmlContent.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (titleMatch) {
+    const pageTitle = titleMatch[1].trim().toLowerCase();
+    if (
+      pageTitle === "access denied" ||
+      pageTitle === "robot check" ||
+      pageTitle === "security check" ||
+      pageTitle === "blocked" ||
+      pageTitle.startsWith("just a moment")
+    ) {
+      return {
+        isBlocked: true,
+        reason: `Anti-bot challenge title detected: "${titleMatch[1].trim()}"`,
+        isRetryable: false,
       };
     }
   }
@@ -166,17 +221,18 @@ export async function retryWithBackoff<T>(
         throw error;
       }
       const message = error instanceof Error ? error.message : String(error);
-      if (/HTTP (?:400|401|403|404|405|406|410|413|422)/.test(message) ||
-          message.includes("Anti-Bot protection") || message.includes("Only HTTP/HTTPS") ||
-          message.includes("private or local hosts") || message.includes("selector")) {
-        throw error;
+      const isRetryableStatus = message.includes("429") || message.includes("503") ||
+        message.includes("Rate Limited") || message.includes("Service Unavailable");
+
+      if (!isRetryableStatus) {
+        if (/HTTP (?:400|401|403|404|405|406|410|413|422)/.test(message) ||
+            message.includes("Anti-Bot protection") || message.includes("Only HTTP/HTTPS") ||
+            message.includes("private or local hosts") || message.includes("selector")) {
+          throw error;
+        }
       }
-      try {
-        const { recordMetric } = await import("./metrics.js");
-        recordMetric("retries");
-      } catch {
-        // Metrics must never change retry behavior.
-      }
+
+      recordMetric("retries");
       await new Promise((resolve) => setTimeout(resolve, delay));
       delay *= backoffFactor;
     }

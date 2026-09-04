@@ -34,6 +34,20 @@ describe("Resilience Module (resilience.ts)", () => {
       const captchaHtml = "<div class='cf-turnstile'></div>";
       expect(detectAntiBot(200, captchaHtml).isBlocked).toBe(true);
     });
+
+    test("should NOT block legitimate 200 OK article discussing access denied or security checks", () => {
+      const legitArticle = `
+        <html>
+          <head><title>How to troubleshoot S3 permissions</title></head>
+          <body>
+            <h1>Resolving Access Denied Errors in AWS</h1>
+            <p>If you encounter an access denied response, perform a security check on your IAM roles.</p>
+          </body>
+        </html>
+      `;
+      const result = detectAntiBot(200, legitArticle);
+      expect(result.isBlocked).toBe(false);
+    });
   });
 
   describe("RateLimiter", () => {

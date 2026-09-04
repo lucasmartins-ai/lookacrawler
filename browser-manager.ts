@@ -17,6 +17,7 @@ const STEALTH_ARGS = [
   "--disable-popup-blocking",
   "--no-first-run",
   "--no-sandbox",
+  "--disable-dev-shm-usage",
 ];
 
 /**
@@ -36,10 +37,19 @@ export function getBrowser(proxy?: string): Promise<Browser> {
       "--disable-blink-features=AutomationControlled",
       "--disable-features=IsolateOrigins,site-per-process",
     ];
-    browser = launchWithFallback(proxy, baseArgs).catch((error) => {
-      browsers.delete(key);
-      throw error;
-    }) as Promise<Browser>;
+    browser = launchWithFallback(proxy, baseArgs)
+      .then((b) => {
+        b.on("disconnected", () => {
+          if (browsers.get(key) === browser) {
+            browsers.delete(key);
+          }
+        });
+        return b;
+      })
+      .catch((error) => {
+        browsers.delete(key);
+        throw error;
+      }) as Promise<Browser>;
     browsers.set(key, browser);
   }
   return browser;
@@ -59,10 +69,10 @@ async function launchWithFallback(proxy: string | undefined, baseArgs: string[])
 
   try {
     // Prefer the installed Google Chrome (real fingerprint, best escape rate).
-    return await launch({ channel: "chrome" });
+    return await launch({ channel: "chrome", timeout: 4000 });
   } catch {
     // Fall back to Playwright's bundled Chromium — still functional, more detectable.
-    return await launch({});
+    return await launch({ timeout: 5000 });
   }
 }
 
