@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { formatJinaReader } from "./jina-format.js";
 
 const VERSION = "1.0.0";
 
@@ -98,7 +99,7 @@ async function runCli() {
         if (isJson) {
           console.log(JSON.stringify({ url, mode, cached: true, content: cached }, null, 2));
         } else {
-          console.log(jinaFormat ? (await import("./jina-format.js")).formatJinaReader(url, cached) : cached);
+          console.log(jinaFormat ? formatJinaReader(url, cached) : cached);
         }
         return;
       }
@@ -117,7 +118,7 @@ async function runCli() {
       if (isJson) {
         console.log(JSON.stringify({ url, mode, cached: false, content: markdown, byteLength: Buffer.byteLength(markdown, "utf8") }, null, 2));
       } else {
-        console.log(jinaFormat ? (await import("./jina-format.js")).formatJinaReader(url, markdown) : markdown);
+        console.log(jinaFormat ? formatJinaReader(url, markdown) : markdown);
       }
     } catch (err: any) {
       console.error(`Extraction error: ${err.message || err}`);

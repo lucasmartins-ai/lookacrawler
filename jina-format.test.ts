@@ -8,7 +8,7 @@ describe("Jina Reader output", () => {
     );
   });
 
-  test("uses an empty title when Markdown has no heading", () => {
-    expect(formatJinaReader("https://example.com", "Body")).toContain("Title: \nURL Source:");
+  test("uses first line as title when Markdown has no heading", () => {
+    expect(formatJinaReader("https://example.com", "Body")).toContain("Title: Body\nURL Source:");
   });
 });
