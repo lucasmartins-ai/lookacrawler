@@ -27,10 +27,6 @@ const ANTI_BOT_SIGNATURES = [
   "g-recaptcha",
   "hcaptcha",
   "cf-turnstile",
-  "enable javascript and cookies to continue",
-  "access denied",
-  "robot check",
-  "security check",
   // Cloudflare's "Verify you are human" turnstile gate.
   "cf-turnstile-widget",
   "cloudflarecaptcha",
