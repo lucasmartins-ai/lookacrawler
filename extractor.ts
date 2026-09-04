@@ -1,6 +1,8 @@
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
+// @ts-ignore - plugin lacks official types
+import { gfm } from "turndown-plugin-gfm";
 import type { Browser } from "playwright";
 import {
   detectAntiBot,
@@ -13,6 +15,19 @@ import { getMaxResponseBytes, validateTargetUrl } from "./security.js";
 import { buildCacheKey, getCachedPage, setCachedPage } from "./cache.js";
 import { recordMetric } from "./metrics.js";
 
+function hasEntries(obj?: Record<string, any>): boolean {
+  return Boolean(obj && Object.keys(obj).length > 0);
+}
+
+export type LinkFormat = "inline" | "references" | "strip";
+export type ImageMode = "ignore" | "alt_only" | "markdown";
+
+export type PageAction =
+  | { type: "click"; selector: string; timeoutMs?: number }
+  | { type: "scroll"; direction?: "up" | "down"; pixels?: number }
+  | { type: "wait"; milliseconds: number }
+  | { type: "fill"; selector: string; value: string };
+
 export interface FastExtractOptions {
   url: string;
   cssSelector?: string;
@@ -21,6 +36,8 @@ export interface FastExtractOptions {
   cookies?: Record<string, string>;
   proxy?: string;
   maxRetries?: number;
+  linkFormat?: LinkFormat;
+  imageMode?: ImageMode;
 }
 
 export interface DeepExtractOptions {
@@ -31,6 +48,9 @@ export interface DeepExtractOptions {
   cookies?: Record<string, string>;
   proxy?: string;
   maxRetries?: number;
+  linkFormat?: LinkFormat;
+  imageMode?: ImageMode;
+  actions?: PageAction[];
 }
 
 const fastInFlight = new Map<string, Promise<string>>();
@@ -139,20 +159,101 @@ export async function fetchHtml(
 /**
  * Configure Turndown instance for token-optimized HTML to Markdown conversion.
  */
-function createTurndownService(): TurndownService {
+interface TurndownPipelineOptions {
+  imageMode?: ImageMode;
+  linkFormat?: LinkFormat;
+  references?: string[];
+}
+
+function createTurndownService(opts: TurndownPipelineOptions = {}): TurndownService {
+  const { imageMode = "ignore", linkFormat = "inline", references = [] } = opts;
   const turndownService = new TurndownService({
     headingStyle: "atx",
     codeBlockStyle: "fenced",
     emDelimiter: "_",
   });
 
-  // Ignore images to save tokens
-  turndownService.addRule("ignore-images", {
-    filter: ["img"],
-    replacement: () => "",
-  });
+  // Enable GitHub-Flavored Markdown tables
+  turndownService.use(gfm);
+
+  // Configure image handling
+  if (imageMode === "ignore") {
+    turndownService.addRule("ignore-images", {
+      filter: ["img"],
+      replacement: () => "",
+    });
+  } else if (imageMode === "alt_only") {
+    turndownService.addRule("alt-only-images", {
+      filter: ["img"],
+      replacement: (_, node) => {
+        const alt = (node as HTMLElement).getAttribute("alt")?.trim();
+        return alt ? `\n\n> 🖼️ *[Imagem: ${alt}]*\n\n` : "";
+      },
+    });
+  } else if (imageMode === "markdown") {
+    turndownService.addRule("keep-images", {
+      filter: ["img"],
+      replacement: (_, node) => {
+        const alt = (node as HTMLElement).getAttribute("alt") || "";
+        const src = (node as HTMLElement).getAttribute("src") || "";
+        return src ? `![${alt}](${src})` : "";
+      },
+    });
+  }
+
+  // Configure link formatting
+  if (linkFormat === "strip") {
+    turndownService.addRule("strip-links", {
+      filter: ["a"],
+      replacement: (content) => content,
+    });
+  } else if (linkFormat === "references") {
+    const refMap = new Map<string, number>();
+    turndownService.addRule("reference-links", {
+      filter: ["a"],
+      replacement: (content, node) => {
+        const href = (node as HTMLElement).getAttribute("href")?.trim();
+        if (!href) return content;
+        let idx = refMap.get(href);
+        if (!idx) {
+          references.push(href);
+          idx = references.length;
+          refMap.set(href, idx);
+        }
+        return `${content} [${idx}]`;
+      },
+    });
+  }
 
   return turndownService;
+}
+
+/**
+ * Prune high link-density container blocks (social links, footer links, tag dumps)
+ */
+function pruneHighLinkDensityElements(document: Document): void {
+  const candidates = Array.from(document.querySelectorAll("div, section, aside, ul, ol"));
+  for (const el of candidates) {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "main" || tag === "article" || el.id === "content" || el.id === "main") continue;
+    
+    // Calculate actual non-whitespace character volume
+    const totalChars = (el.textContent || "").replace(/\s+/g, "").length;
+    if (totalChars < 15) continue;
+
+    const links = Array.from(el.querySelectorAll("a"));
+    if (links.length < 3) continue;
+
+    const linkChars = links.reduce(
+      (sum, link) => sum + (link.textContent || "").replace(/\s+/g, "").length,
+      0
+    );
+
+    const ratio = totalChars > 0 ? linkChars / totalChars : 0;
+    if (ratio >= 0.8) {
+      el.remove();
+    }
+  }
 }
 
 /**
@@ -161,17 +262,57 @@ function createTurndownService(): TurndownService {
  */
 export function processHtmlToMarkdown(
   rawHtml: string,
-  options: { url: string; cssSelector?: string }
+  options: {
+    url: string;
+    cssSelector?: string;
+    linkFormat?: LinkFormat;
+    imageMode?: ImageMode;
+  }
 ): string {
-  const { url, cssSelector } = options;
+  const { url, cssSelector, linkFormat = "inline", imageMode = "ignore" } = options;
   const dom = new JSDOM(rawHtml, { url });
-  return processDocumentToMarkdown(dom.window.document, cssSelector);
+  return processDocumentToMarkdown(dom.window.document, cssSelector, url, linkFormat, imageMode);
 }
 
-function processDocumentToMarkdown(document: Document, cssSelector?: string): string {
+function processDocumentToMarkdown(
+  document: Document,
+  cssSelector?: string,
+  baseUrl?: string,
+  linkFormat: LinkFormat = "inline",
+  imageMode: ImageMode = "ignore"
+): string {
+  // 1. Resolve relative URLs to absolute URLs
+  if (baseUrl) {
+    for (const a of Array.from(document.querySelectorAll("a[href]"))) {
+      try {
+        const href = a.getAttribute("href");
+        if (
+          href &&
+          !href.startsWith("#") &&
+          !href.startsWith("mailto:") &&
+          !href.startsWith("tel:") &&
+          !href.startsWith("javascript:")
+        ) {
+          a.setAttribute("href", new URL(href, baseUrl).toString());
+        }
+      } catch {
+        /* keep original on invalid URL */
+      }
+    }
+
+    for (const img of Array.from(document.querySelectorAll("img[src]"))) {
+      try {
+        const src = img.getAttribute("src");
+        if (src && !src.startsWith("data:")) {
+          img.setAttribute("src", new URL(src, baseUrl).toString());
+        }
+      } catch {
+        /* keep original */
+      }
+    }
+  }
 
   // 2. Aggressive DOM Pruning (Token Economy)
-  // Remove script, style, svg, iframe, noscript, nav, footer, and form tags
   const tagsToRemove = [
     "script",
     "style",
@@ -190,15 +331,25 @@ function processDocumentToMarkdown(document: Document, cssSelector?: string): st
     }
   }
 
-  // 3. Targeted Extraction (CSS Selector)
+  // 3. Prune high link density boilerplate
+  pruneHighLinkDensityElements(document);
+
+  const references: string[] = [];
+  const turndownService = createTurndownService({ imageMode, linkFormat, references });
+
+  // 4. Targeted Extraction (CSS Selector)
   if (cssSelector) {
     const targetNode = document.querySelector(cssSelector);
     if (targetNode) {
-      document.body.innerHTML = targetNode.outerHTML;
+      let markdown = turndownService.turndown(targetNode.outerHTML);
+      if (linkFormat === "references" && references.length > 0) {
+        markdown += "\n\n---\n### Referências\n" + references.map((u, i) => `[${i + 1}]: ${u}`).join("\n");
+      }
+      return markdown.replace(/\n{3,}/g, "\n\n").trim();
     }
   }
 
-  // 4. Readability & Turndown
+  // 5. Readability & Turndown
   let cleanHtml = "";
   const reader = new Readability(document);
   const article = reader.parse();
@@ -206,12 +357,13 @@ function processDocumentToMarkdown(document: Document, cssSelector?: string): st
   if (article && article.content) {
     cleanHtml = article.content;
   } else {
-    // Fallback to pruned document body HTML if Readability yields empty content
-    cleanHtml = document.body.innerHTML;
+    cleanHtml = document.body ? document.body.innerHTML : "";
   }
 
-  const turndownService = createTurndownService();
   let markdown = turndownService.turndown(cleanHtml);
+  if (linkFormat === "references" && references.length > 0) {
+    markdown += "\n\n---\n### Referências\n" + references.map((u, i) => `[${i + 1}]: ${u}`).join("\n");
+  }
 
   // Clean up consecutive blank lines & trailing whitespace
   markdown = markdown.replace(/\n{3,}/g, "\n\n").trim();
@@ -233,7 +385,7 @@ export function extractFast(options: FastExtractOptions): Promise<string> {
 }
 
 async function extractFastOnce(options: FastExtractOptions): Promise<string> {
-  const { url, cssSelector, timeoutMs, headers, cookies, proxy, maxRetries = 3 } = options;
+  const { url, cssSelector, timeoutMs, headers, cookies, proxy, maxRetries = 3, linkFormat, imageMode } = options;
 
   recordMetric("requests");
   const startedAt = Date.now();
@@ -241,7 +393,7 @@ async function extractFastOnce(options: FastExtractOptions): Promise<string> {
     const result = await retryWithBackoff(
     async () => {
       const rawHtml = await fetchHtml(url, { timeoutMs, headers, cookies, proxy });
-      return processHtmlToMarkdown(rawHtml, { url, cssSelector });
+      return processHtmlToMarkdown(rawHtml, { url, cssSelector, linkFormat, imageMode });
     },
     { maxRetries }
   );
@@ -266,6 +418,8 @@ async function extractFastOnce(options: FastExtractOptions): Promise<string> {
         cookies,
         proxy,
         maxRetries: Math.max(1, maxRetries - 1),
+        linkFormat,
+        imageMode,
       });
     }
     recordMetric("failures");
@@ -303,79 +457,134 @@ async function extractDeepOnce(options: DeepExtractOptions): Promise<string> {
     cookies,
     proxy,
     maxRetries = 3,
+    linkFormat,
+    imageMode,
+    actions,
   } = options;
 
-  return retryWithBackoff(
-    async () => {
-      let context: Awaited<ReturnType<Browser["newContext"]>> | null = null;
+  recordMetric("requests");
+  const startedAt = Date.now();
 
-      try {
-        await validateTargetUrl(url);
-        await globalRateLimiter.throttle(url);
-        const browser = await getBrowser(proxy);
+  try {
+    const result = await retryWithBackoff(
+      async () => {
+        let context: Awaited<ReturnType<Browser["newContext"]>> | null = null;
 
-        context = await browser.newContext({
-          userAgent:
-            headers?.["User-Agent"] ||
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          viewport: { width: 1920, height: 1080 },
-          locale: "en-US",
-          timezoneId: "Europe/London",
-        });
+        try {
+          await validateTargetUrl(url);
+          await globalRateLimiter.throttle(url);
+          const browser = await getBrowser(proxy);
 
-        if (headers) {
-          await context.setExtraHTTPHeaders(headers);
-        }
+          context = await browser.newContext({
+            userAgent:
+              headers?.["User-Agent"] ||
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport: { width: 1920, height: 1080 },
+            locale: "en-US",
+            timezoneId: "Europe/London",
+          });
 
-        if (cookies && Object.keys(cookies).length > 0) {
-          const parsedUrl = new URL(url);
-          const playwrightCookies = Object.entries(cookies).map(([name, value]) => ({
-            name,
-            value,
-            domain: parsedUrl.hostname,
-            path: "/",
-          }));
-          await context.addCookies(playwrightCookies);
-        }
+          // Install stealth script to spoof fingerprint before any page script executes
+          await context.addInitScript(getStealthInit());
 
-        const page = await context.newPage();
-
-        // Crucial Optimization: Request Interception to save RAM & bandwidth
-        await page.route("**/*", (route) => {
-          const resourceType = route.request().resourceType();
-          if (ALLOWED_RESOURCE_TYPES.has(resourceType)) {
-            route.continue();
-          } else {
-            route.abort();
+          if (headers) {
+            await context.setExtraHTTPHeaders(headers);
           }
-        });
 
-        const response = await page.goto(url, {
-          waitUntil: "domcontentloaded",
-          timeout: timeoutMs,
-        });
+          if (cookies && Object.keys(cookies).length > 0) {
+            const parsedUrl = new URL(url);
+            const playwrightCookies = Object.entries(cookies).map(([name, value]) => ({
+              name,
+              value,
+              domain: parsedUrl.hostname,
+              path: "/",
+            }));
+            await context.addCookies(playwrightCookies);
+          }
 
-        if (cssSelector) {
-          await page.locator(cssSelector).first().waitFor({ state: "attached", timeout: Math.min(timeoutMs, 3000) }).catch(() => {});
-        } else {
-          await page.waitForLoadState("networkidle", { timeout: Math.min(timeoutMs, 3000) }).catch(() => {});
+          const page = await context.newPage();
+
+          // Crucial Optimization: Request Interception & SSRF Navigation Protection
+          await page.route("**/*", async (route) => {
+            const req = route.request();
+            const resourceType = req.resourceType();
+
+            // Intercept navigations (including 301/302 redirects) to prevent SSRF
+            if (req.isNavigationRequest()) {
+              try {
+                await validateTargetUrl(req.url());
+              } catch {
+                return route.abort();
+              }
+            }
+
+            if (ALLOWED_RESOURCE_TYPES.has(resourceType)) {
+              return route.continue();
+            } else {
+              return route.abort();
+            }
+          });
+
+          const response = await page.goto(url, {
+            waitUntil: "domcontentloaded",
+            timeout: timeoutMs,
+          });
+
+          if (cssSelector) {
+            await page.locator(cssSelector).first().waitFor({ state: "attached", timeout: Math.min(timeoutMs, 3000) }).catch(() => {});
+          } else {
+            await page.waitForLoadState("networkidle", { timeout: Math.min(timeoutMs, 3000) }).catch(() => {});
+          }
+
+          // Execute pre-crawl automation actions if defined (e.g. cookie consent, load more, scrolling)
+          if (actions && actions.length > 0) {
+            for (const act of actions) {
+              try {
+                if (act.type === "click" && act.selector) {
+                  await page.waitForSelector(act.selector, { timeout: act.timeoutMs || 3000 }).catch(() => {});
+                  await page.click(act.selector).catch(() => {});
+                } else if (act.type === "scroll") {
+                  const px = act.pixels ?? 800;
+                  const dy = act.direction === "up" ? -px : px;
+                  await page.evaluate((y) => window.scrollBy({ top: y, behavior: "smooth" }), dy);
+                  await page.waitForTimeout(400);
+                } else if (act.type === "wait" && act.milliseconds) {
+                  await page.waitForTimeout(act.milliseconds);
+                } else if (act.type === "fill" && act.selector) {
+                  await page.waitForSelector(act.selector, { timeout: 3000 }).catch(() => {});
+                  await page.fill(act.selector, act.value || "").catch(() => {});
+                }
+              } catch {
+                /* non-critical action failure */
+              }
+            }
+          }
+
+          const renderedHtml = await page.content();
+          const status = response ? response.status() : 200;
+
+          const antiBotCheck = detectAntiBot(status, renderedHtml);
+          if (antiBotCheck.isBlocked) {
+            throw new Error(`Anti-Bot protection triggered in deep crawl: ${antiBotCheck.reason}`);
+          }
+
+          recordMetric("bytesFetched", Buffer.byteLength(renderedHtml, "utf8"));
+          return processHtmlToMarkdown(renderedHtml, { url, cssSelector, linkFormat, imageMode });
+        } finally {
+          await context?.close().catch(() => {});
         }
+      },
+      { maxRetries }
+    );
 
-        const renderedHtml = await page.content();
-        const status = response ? response.status() : 200;
-
-        const antiBotCheck = detectAntiBot(status, renderedHtml);
-        if (antiBotCheck.isBlocked) {
-          throw new Error(`Anti-Bot protection triggered in deep crawl: ${antiBotCheck.reason}`);
-        }
-
-        return processHtmlToMarkdown(renderedHtml, { url, cssSelector });
-      } finally {
-        await context?.close().catch(() => {});
-      }
-    },
-    { maxRetries }
-  );
+    recordMetric("successes");
+    recordMetric("durationMs", Date.now() - startedAt);
+    return result;
+  } catch (error) {
+    recordMetric("failures");
+    recordMetric("durationMs", Date.now() - startedAt);
+    throw error;
+  }
 }
 
 export interface PageMetadata {
@@ -390,6 +599,7 @@ export interface PageMetadata {
   author?: string;
   publishedTime?: string;
   keywords?: string[];
+  jsonLd?: any[];
 }
 
 export interface StructuredExtractOptions {
@@ -495,6 +705,20 @@ function extractMetadataFromDocument(document: Document): PageMetadata {
         .filter(Boolean)
     : undefined;
 
+  // Extract application/ld+json structured schema blocks
+  const jsonLdScripts = Array.from(
+    document.querySelectorAll("script[type='application/ld+json']")
+  );
+  const jsonLd: any[] = [];
+  for (const s of jsonLdScripts) {
+    try {
+      const text = s.textContent?.trim();
+      if (text) jsonLd.push(JSON.parse(text));
+    } catch {
+      /* ignore invalid JSON */
+    }
+  }
+
   return {
     title: title?.trim(),
     description: description?.trim(),
@@ -507,6 +731,7 @@ function extractMetadataFromDocument(document: Document): PageMetadata {
     author,
     publishedTime,
     keywords,
+    jsonLd: jsonLd.length > 0 ? jsonLd : undefined,
   };
 }
 
@@ -557,12 +782,23 @@ export async function fetchRawHtml(
             await context.addCookies(playwrightCookies);
           }
           const page = await context.newPage();
-          await page.route("**/*", (route) => {
-            const resourceType = route.request().resourceType();
+          await page.route("**/*", async (route) => {
+            const req = route.request();
+            const resourceType = req.resourceType();
+
+            // Intercept navigations (including 301/302 redirects) to prevent SSRF
+            if (req.isNavigationRequest()) {
+              try {
+                await validateTargetUrl(req.url());
+              } catch {
+                return route.abort();
+              }
+            }
+
             if (ALLOWED_RESOURCE_TYPES.has(resourceType)) {
-              route.continue();
+              return route.continue();
             } else {
-              route.abort();
+              return route.abort();
             }
           });
           const response = await page.goto(url, {
@@ -630,19 +866,40 @@ export async function extractStructured(
   if (schema && Object.keys(schema).length > 0) {
     data = {};
 
-    for (const [key, selector] of Object.entries(schema)) {
+    for (const [key, rawSelector] of Object.entries(schema)) {
+      let selector = rawSelector.trim();
+      let attr: string | undefined;
+      const atIndex = selector.indexOf("@");
+      if (atIndex !== -1) {
+        attr = selector.slice(atIndex + 1).trim();
+        selector = selector.slice(0, atIndex).trim();
+      }
+
       const elements = Array.from(document.querySelectorAll(selector));
+      const getVal = (el: Element): string => {
+        if (attr) {
+          return el.getAttribute(attr)?.trim() || "";
+        }
+        if (el.tagName === "A" && el.hasAttribute("href")) {
+          return el.getAttribute("href")?.trim() || el.textContent?.trim() || "";
+        }
+        if (el.tagName === "IMG" && el.hasAttribute("src")) {
+          return el.getAttribute("src")?.trim() || "";
+        }
+        return el.textContent?.trim() || "";
+      };
+
       if (elements.length === 0) {
         data[key] = "";
       } else if (elements.length === 1) {
-        data[key] = elements[0].textContent?.trim() || "";
+        data[key] = getVal(elements[0]);
       } else {
-        data[key] = elements.map((el) => el.textContent?.trim() || "").filter(Boolean);
+        data[key] = elements.map(getVal).filter(Boolean);
       }
     }
   }
 
-  const markdown = processDocumentToMarkdown(document, cssSelector);
+  const markdown = processDocumentToMarkdown(document, cssSelector, url);
 
   return {
     url,
@@ -670,28 +927,29 @@ export async function batchExtract(
     maxRetries = 3,
   } = options;
 
-  const results: BatchItemResult[] = [];
-  const queue = [...urls];
+  const results: BatchItemResult[] = new Array(urls.length);
+  const queue = urls.map((url, index) => ({ url, index }));
 
   const worker = async () => {
     while (queue.length > 0) {
-      const targetUrl = queue.shift();
-      if (!targetUrl) break;
+      const item = queue.shift();
+      if (!item) break;
+      const { url: targetUrl, index } = item;
 
       try {
-        const canCache = !headers && !cookies && !proxy;
+        const canCache = !hasEntries(headers) && !hasEntries(cookies) && !proxy;
         const cacheKey = buildCacheKey({ url: targetUrl, mode, cssSelector });
         if (canCache) {
           const cached = getCachedPage(cacheKey);
           if (cached !== null) {
             const charCount = cached.length;
-            results.push({
+            results[index] = {
               url: targetUrl,
               success: true,
               markdown: cached,
               charCount,
               estimatedTokens: Math.ceil(charCount / 4),
-            });
+            };
             continue;
           }
         }
@@ -722,20 +980,20 @@ export async function batchExtract(
         const charCount = markdown.length;
         const estimatedTokens = Math.ceil(charCount / 4);
 
-        results.push({
+        results[index] = {
           url: targetUrl,
           success: true,
           markdown,
           charCount,
           estimatedTokens,
-        });
+        };
         if (canCache) setCachedPage(cacheKey, markdown);
       } catch (err: any) {
-        results.push({
+        results[index] = {
           url: targetUrl,
           success: false,
           error: err.message || String(err),
-        });
+        };
       }
     }
   };
@@ -743,10 +1001,10 @@ export async function batchExtract(
   const workers = Array.from({ length: Math.min(concurrency, urls.length) }, () => worker());
   await Promise.all(workers);
 
-  const successful = results.filter((r) => r.success).length;
-  const failed = results.filter((r) => !r.success).length;
-  const totalCharCount = results.reduce((acc, r) => acc + (r.charCount || 0), 0);
-  const totalEstimatedTokens = results.reduce((acc, r) => acc + (r.estimatedTokens || 0), 0);
+  const successful = results.filter((r) => r && r.success).length;
+  const failed = results.filter((r) => r && !r.success).length;
+  const totalCharCount = results.reduce((acc, r) => acc + (r?.charCount || 0), 0);
+  const totalEstimatedTokens = results.reduce((acc, r) => acc + (r?.estimatedTokens || 0), 0);
 
   return {
     totalUrls: urls.length,
@@ -757,3 +1015,16 @@ export async function batchExtract(
     results,
   };
 }
+
+// Re-export web mapping and recursive crawling capabilities
+export {
+  mapWebsite,
+  crawlWebsite,
+  type MapWebsiteOptions,
+  type MapWebsiteResult,
+  type DiscoveredUrl,
+  type CrawlWebsiteOptions,
+  type CrawlWebsiteResult,
+  type CrawledPage,
+} from "./crawler.js";
+

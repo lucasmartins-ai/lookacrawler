@@ -76,4 +76,34 @@ describe("Batch Extraction (extractor.ts)", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("batchExtract should preserve exact input URL order regardless of completion time", async () => {
+    const originalFetch = globalThis.fetch;
+    (globalThis as any).fetch = async (url: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes("slow")) {
+        await new Promise((r) => setTimeout(r, 60));
+        return new Response("<html><body><h1>Slow</h1></body></html>", { status: 200 });
+      }
+      return new Response("<html><body><h1>Fast</h1></body></html>", { status: 200 });
+    };
+
+    try {
+      const urls = [
+        "https://example.com/slow",
+        "https://example.com/fast",
+      ];
+
+      const batchResult = await batchExtract({
+        urls,
+        mode: "fast",
+        concurrency: 2,
+      });
+
+      expect(batchResult.results[0].url).toBe("https://example.com/slow");
+      expect(batchResult.results[1].url).toBe("https://example.com/fast");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

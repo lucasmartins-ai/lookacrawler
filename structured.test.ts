@@ -79,4 +79,61 @@ describe("Structured & Metadata Extraction (extractor.ts)", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("extractMetadata should parse JSON-LD structured data blocks", () => {
+    const jsonLdHtml = `
+      <html>
+        <head>
+          <script type="application/ld+json">
+            {
+              "@context": "https://schema.org",
+              "@type": "Product",
+              "name": "Mechanical Keyboard",
+              "offers": { "@type": "Offer", "price": "149.99", "priceCurrency": "USD" }
+            }
+          </script>
+        </head>
+        <body><h1>Product Page</h1></body>
+      </html>
+    `;
+
+    const metadata = extractMetadata(jsonLdHtml, "https://example.com/product");
+    expect(metadata.jsonLd).toBeDefined();
+    expect(metadata.jsonLd?.[0]?.name).toBe("Mechanical Keyboard");
+    expect(metadata.jsonLd?.[0]?.offers?.price).toBe("149.99");
+  });
+
+  test("extractStructured should support attribute extraction (@href, @src)", async () => {
+    const htmlWithAttrs = `
+      <html>
+        <body>
+          <a class="cta" href="https://example.com/buy-now">Buy Product</a>
+          <img class="hero" src="https://example.com/keyboard.jpg" alt="Keyboard" />
+        </body>
+      </html>
+    `;
+
+    const originalFetch = globalThis.fetch;
+    (globalThis as any).fetch = async () => {
+      return new Response(htmlWithAttrs, { status: 200, headers: { "content-type": "text/html" } });
+    };
+
+    try {
+      const result = await extractStructured({
+        url: "https://example.com/product",
+        mode: "fast",
+        schema: {
+          ctaLink: "a.cta @href",
+          heroImage: "img.hero @src",
+          ctaText: "a.cta",
+        },
+      });
+
+      expect(result.data?.ctaLink).toBe("https://example.com/buy-now");
+      expect(result.data?.heroImage).toBe("https://example.com/keyboard.jpg");
+      expect(result.data?.ctaText).toBe("https://example.com/buy-now"); // Auto-extracted href for <a> tag
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

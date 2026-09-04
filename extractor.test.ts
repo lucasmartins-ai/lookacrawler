@@ -81,4 +81,54 @@ describe("HTML to Markdown Extraction Pipeline (extractor.ts)", () => {
     expect(markdown).not.toMatch(/\n{3,}/);
     expect(markdown).toContain("Heading");
   });
+
+  test("should convert HTML tables into clean GFM Markdown tables", () => {
+    const tableHtml = `
+      <html>
+        <body>
+          <main>
+            <h1>Pricing Table</h1>
+            <table>
+              <thead>
+                <tr><th>Plan</th><th>Monthly</th><th>Yearly</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Free</td><td>$0</td><td>$0</td></tr>
+                <tr><td>Pro</td><td>$20</td><td>$200</td></tr>
+              </tbody>
+            </table>
+          </main>
+        </body>
+      </html>
+    `;
+
+    const markdown = processHtmlToMarkdown(tableHtml, {
+      url: "https://example.com/pricing",
+    });
+
+    expect(markdown).toContain("| Plan | Monthly | Yearly |");
+    expect(markdown).toContain("| Free | $0 | $0 |");
+    expect(markdown).toContain("| Pro | $20 | $200 |");
+  });
+
+  test("should resolve relative URLs to absolute URLs", () => {
+    const relativeHtml = `
+      <html>
+        <body>
+          <main>
+            <h1>Documentation</h1>
+            <p>Visit the <a href="/docs/getting-started">Getting Started</a> guide.</p>
+            <p>Check the <a href="../api">API Reference</a>.</p>
+          </main>
+        </body>
+      </html>
+    `;
+
+    const markdown = processHtmlToMarkdown(relativeHtml, {
+      url: "https://example.com/v1/intro",
+    });
+
+    expect(markdown).toContain("[Getting Started](https://example.com/docs/getting-started)");
+    expect(markdown).toContain("[API Reference](https://example.com/api)");
+  });
 });
