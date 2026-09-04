@@ -154,7 +154,7 @@ Markdown text. Cache hits are prefixed with a NOTE marker. Unsupported URLs (non
           maxRetries: max_retries,
           linkFormat: link_format,
           imageMode: image_mode,
-          actions,
+          actions: actions as PageAction[] | undefined,
         });
       } else {
         throw new Error(`Unsupported mode: ${mode}`);

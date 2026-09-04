@@ -31,6 +31,8 @@ export interface CacheKeyOptions {
   cssSelector?: string;
   pipelineVersion?: string;
   variant?: unknown;
+  linkFormat?: string;
+  imageMode?: string;
 }
 
 function normalizeUrl(rawUrl: string): string {
@@ -61,6 +63,8 @@ export function buildCacheKey(options: CacheKeyOptions): string {
     cssSelector: options.cssSelector || "",
     pipelineVersion: options.pipelineVersion || "1",
     variant: options.variant || null,
+    linkFormat: options.linkFormat || null,
+    imageMode: options.imageMode || null,
   });
   return createHash("sha256").update(canonical).digest("hex");
 }

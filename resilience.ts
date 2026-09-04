@@ -203,8 +203,19 @@ export interface RetryOptions {
  */
 export async function retryWithBackoff<T>(
   fn: () => Promise<T>,
-  options: RetryOptions = {}
+  optionsOrMaxRetries: RetryOptions | number = {},
+  initialDelayMsParam?: number,
+  backoffFactorParam?: number
 ): Promise<T> {
+  const options: RetryOptions =
+    typeof optionsOrMaxRetries === "number"
+      ? {
+          maxRetries: optionsOrMaxRetries,
+          initialDelayMs: initialDelayMsParam,
+          backoffFactor: backoffFactorParam,
+        }
+      : optionsOrMaxRetries;
+
   const maxRetries = options.maxRetries ?? 3;
   const initialDelayMs = options.initialDelayMs ?? 500;
   const backoffFactor = options.backoffFactor ?? 2;

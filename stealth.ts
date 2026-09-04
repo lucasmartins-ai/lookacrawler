@@ -96,7 +96,11 @@ export function buildStealthInit(): () => void {
       try {
         const toStr = Function.prototype.toString;
         Function.prototype.toString = function (this: any) {
-          if ((window.navigator.permissions.query as any) === this) return "function query() { [native code] }";
+          try {
+            if (typeof window !== "undefined" && ((window as any)?.navigator?.permissions?.query as any) === this) {
+              return "function query() { [native code] }";
+            }
+          } catch { /* noop */ }
           return toStr.call(this);
         };
       } catch { /* noop */ }

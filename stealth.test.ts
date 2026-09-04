@@ -39,6 +39,7 @@ describe("Stealth Module (stealth.ts)", () => {
     // Save original globals if present
     const origNav = (globalThis as any).navigator;
     const origWin = (globalThis as any).window;
+    const origToStr = Function.prototype.toString;
 
     try {
       (globalThis as any).navigator = mockNavigator;
@@ -57,6 +58,7 @@ describe("Stealth Module (stealth.ts)", () => {
     } finally {
       (globalThis as any).navigator = origNav;
       (globalThis as any).window = origWin;
+      Function.prototype.toString = origToStr;
     }
   });
 });

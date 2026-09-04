@@ -219,7 +219,7 @@ async function runCli() {
 
     try {
       const result = await crawlWebsite({
-        url,
+        startUrl: url,
         maxDepth,
         maxPages,
         mode,
@@ -233,7 +233,7 @@ async function runCli() {
       const outputJson = JSON.stringify(result, null, 2);
       if (outputFile) {
         await writeFile(outputFile, outputJson, "utf8");
-        console.log(`Crawl completed: ${result.visitedCount} pages crawled, saved to ${outputFile}`);
+        console.log(`Crawl completed: ${result.totalPagesCrawled} pages crawled, saved to ${outputFile}`);
       } else {
         console.log(outputJson);
       }

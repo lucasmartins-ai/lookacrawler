@@ -26,7 +26,8 @@ export interface MapWebsiteResult {
 }
 
 export interface CrawlWebsiteOptions {
-  startUrl: string;
+  startUrl?: string;
+  url?: string;
   maxDepth?: number;
   maxPages?: number;
   concurrency?: number;
@@ -187,8 +188,11 @@ export async function mapWebsite(options: MapWebsiteOptions): Promise<MapWebsite
  * Perform autonomous, recursive website crawling with depth boundaries, regex route filtering, and token accounting.
  */
 export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlWebsiteResult> {
+  const startUrl = options.startUrl || options.url;
+  if (!startUrl) {
+    throw new Error("Missing startUrl for crawler");
+  }
   const {
-    startUrl,
     maxDepth = 2,
     maxPages = 10,
     concurrency = 3,
