@@ -323,6 +323,8 @@ async function extractDeepOnce(options: DeepExtractOptions): Promise<string> {
           timezoneId: "Europe/London",
         });
 
+        await context.addInitScript(getStealthInit());
+
         if (headers) {
           await context.setExtraHTTPHeaders(headers);
         }
