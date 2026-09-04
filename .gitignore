@@ -1,4 +1,4 @@
 node_modules
 dist
-crawler_cache.sqlite
-crawler_cache.sqlite-journal
+crawler_cache.sqlite*
+*.sqlite*

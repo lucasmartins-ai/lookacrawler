@@ -36,6 +36,7 @@ RUN bunx playwright install chromium
 
 EXPOSE 3000
 
+ENV HOST=0.0.0.0
 ENV PORT=3000
 
-CMD ["bun", "run", "cli.ts", "serve", "--transport", "sse", "--port", "3000"]
+CMD ["bun", "run", "cli.ts", "serve", "--transport", "sse", "--port", "3000", "--host", "0.0.0.0"]
