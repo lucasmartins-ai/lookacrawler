@@ -4,7 +4,7 @@ import { formatJinaReader } from "./jina-format.js";
 import { readFile, writeFile } from "fs/promises";
 import { toSafeCsv } from "./csv-safe.js";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 
 function showHelp() {
   console.log(`
