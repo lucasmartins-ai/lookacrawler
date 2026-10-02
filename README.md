@@ -136,6 +136,9 @@ bun run cli.ts maps "dental clinic" "Bristol" --limit 20
 # Enrich a company website: emails, socials, decision makers, short summary
 bun run cli.ts enrich https://example.com --title "Example Ltd" --mode fast
 
+# Enrich many leads at once from a JSON array of {title, website}
+bun run cli.ts enrich-batch leads.json --concurrency 3 -o enriched.json
+
 # Start MCP Server via SSE on port 3000
 bun run cli.ts serve --transport sse --port 3000
 ```
@@ -144,7 +147,31 @@ bun run cli.ts serve --transport sse --port 3000
 > accept the proxy's forged certificate. Off by default — never enable it for
 > untrusted networks.
 
-### 3. Docker Deployment
+> **Rotating proxies?** Export `LOOKACRAWLER_PROXIES` with a comma or
+> whitespace separated list of URLs. Every request without an explicit
+> `--proxy` pulls the next entry, so one blocked IP is not fatal for the run.
+
+### 3. Google Maps engine (optional)
+
+The `maps` command and the `discover_local_leads` MCP tool delegate to a sibling
+Google Maps scraper binary. It is a separate Go project
+([`google-maps-scraper`](https://github.com/coelhobugado/google-maps-scraper),
+MIT) and is **not** vendored into this repository.
+
+Place the compiled `maps-leads` binary in one of these locations, or point
+`MAPS_LEADS_BIN` at it:
+
+```
+./google-maps-scraper/maps-leads          # repo root
+../google-maps-scraper/maps-leads         # sibling directory
+$MAPS_LEADS_BIN                           # anywhere
+```
+
+Without it, `maps` fails fast with a clear message; `extract`, `crawl`,
+`contacts`, `places` and `enrich` are unaffected. Pass `--email` to let the
+scraper extract public emails during discovery.
+
+### 4. Docker Deployment
 
 ```bash
 # Build and run Docker container

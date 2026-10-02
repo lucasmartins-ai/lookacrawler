@@ -35,11 +35,11 @@ describe("CLI Extended Integration Suite (cli.ts)", () => {
   it("should output version for --version and -v", async () => {
     const res1 = await runCli(["--version"]);
     expect(res1.exitCode).toBe(0);
-    expect(res1.stdout.trim()).toBe("v1.0.0");
+    expect(res1.stdout.trim()).toBe("v1.1.0");
 
     const res2 = await runCli(["-v"]);
     expect(res2.exitCode).toBe(0);
-    expect(res2.stdout.trim()).toBe("v1.0.0");
+    expect(res2.stdout.trim()).toBe("v1.1.0");
   });
 
   it("should fail with code 1 and error message if extract has no URL", async () => {

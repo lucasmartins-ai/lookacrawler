@@ -1,6 +1,7 @@
 import { extractFast, extractDeep, type LinkFormat, type ImageMode } from "./extractor.js";
 import { getCachedPage, setCachedPage, buildCacheKey } from "./cache.js";
 import { validateTargetUrl } from "./security.js";
+import { extractContacts } from "./contacts.js";
 import type { GoogleMapsLead } from "./maps-bridge.js";
 
 export interface EnrichedLeadResult {
@@ -145,14 +146,53 @@ export async function deepEnrichLead(
     result.sourcePagesCrawled.push(lead.web_site);
     result.enrichedFromUrl = lead.web_site;
 
-    // 2. Extract emails from markdown
+    // Contact extraction runs on the RAW html, not on `homeMarkdown`.
+    // The markdown pipeline strips <nav>/<footer> as boilerplate, which is
+    // exactly where most companies put the contact email and social links —
+    // reading them back from the pruned markdown returned emails: [] for
+    // sites that list them plainly in the footer. It also pruned the /contact
+    // link that step 5 searches for, so that fallback never fired either.
+    // extractContacts discovers contact subpages from the raw html, so it
+    // finds both; reuse it instead of keeping a second, weaker regex set.
+    let contacts: Awaited<ReturnType<typeof extractContacts>> | null = null;
+    try {
+      contacts = await extractContacts({
+        url: lead.web_site,
+        deepScan: options.crawlContactPages !== false,
+      });
+    } catch {
+      /* contact extraction is best-effort; markdown fallbacks below still run */
+    }
+
+    if (contacts) {
+      for (const em of contacts.emails) {
+        if (!result.emails.includes(em)) result.emails.push(em);
+      }
+      const { instagram, linkedin, facebook, youtube, twitter } = contacts.socials;
+      result.socialLinks.instagram = instagram;
+      result.socialLinks.linkedin = linkedin;
+      result.socialLinks.facebook = facebook;
+      result.socialLinks.youtube = youtube;
+      result.socialLinks.twitter = twitter;
+      for (const p of contacts.phones) {
+        if (!result.additionalPhones.includes(p) && p !== result.phone) {
+          result.additionalPhones.push(p);
+        }
+      }
+      for (const wa of contacts.whatsapps) {
+        if (!result.whatsapp) result.whatsapp = wa;
+      }
+    }
+
+    // 3. Markdown scan as a fallback for pages whose contact data survived
+    //    pruning (e.g. an address block inside <main>).
     const foundEmails = homeMarkdown.match(EMAIL_REGEX) || [];
     const cleaned = cleanEmails(foundEmails);
     for (const em of cleaned) {
       if (!result.emails.includes(em)) result.emails.push(em);
     }
 
-    // 3. Extract social links
+    // 4. Extract social links
     const socialMatches = homeMarkdown.match(/https?:\/\/(?:www\.)?(instagram|linkedin|facebook|youtube|twitter|x)\.com\/[a-zA-Z0-9._-]+/gi) || [];
     for (const sm of socialMatches) {
       const lower = sm.toLowerCase();
@@ -169,7 +209,7 @@ export async function deepEnrichLead(
       }
     }
 
-    // 4. Extract possible additional phones
+    // 5. Extract possible additional phones
     const foundPhones = homeMarkdown.match(INTL_PHONE_REGEX) || [];
     for (const rawP of foundPhones) {
       const clean = rawP.trim();

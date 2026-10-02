@@ -109,6 +109,26 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
 }
 
 /**
+ * Decode a Cloudflare-obfuscated email from `/cdn-cgi/l/email-protection#<hex>`.
+ *
+ * The first byte is the XOR key and the rest is the address, one byte each.
+ * Millions of sites protect their contact address this way, so a plain text
+ * scan finds "[email protected]" and returns nothing at all.
+ */
+export function decodeCloudflareEmail(hex: string): string | null {
+  const clean = hex.trim();
+  if (clean.length < 4 || clean.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(clean)) {
+    return null;
+  }
+  const key = parseInt(clean.slice(0, 2), 16);
+  let out = "";
+  for (let i = 2; i < clean.length; i += 2) {
+    out += String.fromCharCode(parseInt(clean.slice(i, i + 2), 16) ^ key);
+  }
+  return out.includes("@") ? out : null;
+}
+
+/**
  * Parses emails, phone numbers, WhatsApps, and social links from an HTML document string.
  */
 function parseContactsFromHtml(
@@ -121,6 +141,17 @@ function parseContactsFromHtml(
 ): void {
   const dom = new JSDOM(html, { url: rootUrl.toString() });
   const doc = dom.window.document;
+
+  // 0. Cloudflare email protection — decode before anything else, since the
+  //    address is never present as plaintext anywhere in the document.
+  for (const el of Array.from(doc.querySelectorAll('a[href*="/cdn-cgi/l/email-protection"]'))) {
+    const hash = (el.getAttribute("href") || "").split("#")[1];
+    if (!hash) continue;
+    const decoded = decodeCloudflareEmail(hash);
+    if (decoded && isValidEmail(decoded.toLowerCase())) {
+      emails.add(decoded.toLowerCase());
+    }
+  }
 
   // 1. Extract mailto: links
   for (const a of Array.from(doc.querySelectorAll('a[href^="mailto:"]'))) {
