@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [1.1.1] — 2026-10-02
+
+Patch release. `places` was returning a single result titled "Results" — the
+results-list heading read as a business name — while every real card on the
+page went unparsed. Three separate breakages, each reproduced against live
+Google Maps before being fixed.
+
+### Fixed
+
+- **Consent interstitial blocked Maps entirely.** Google redirects to
+  `consent.google.com`, which serves no results until answered. The handler
+  matched `aria-label*="Accept"`, but that label is localized — a run served
+  `hl=pt-BR` with the button reading "Aceitar todos" and never matched. It now
+  covers several languages and waits for the redirect back to Maps.
+- **Results view was mistaken for a single place.** The branch that decides
+  between the two views read the page `h1`, which is the localized heading
+  "Results". It now keys off whether any `/maps/place/` card exists.
+- **Every coordinate was dropped.** Current Maps URLs encode position as
+  `!3d<lat>!4d<lng>`; the parser only handled the legacy `@lat,lng,zoom` form,
+  so no result carried a latitude or longitude.
+
+### Added
+
+- `readCardMeta()` reads rating, review count, category and address from the
+  result card, so a sweep stays at one page load instead of opening each place.
+
+### Verification
+
+`tsc --noEmit` clean · `bun test` 147 pass / 2 skip / 0 fail. Live run of
+`places "dental clinic Bristol" --limit 3` returns real businesses with rating,
+category, address and coordinates; CSV output carries all of them.
+
 ## [1.1.0] — 2026-10-02
 
 First release since `v1.0.0` (21 commits). Additive feature work plus five
@@ -88,6 +120,7 @@ CLI flags and MCP tools keep their current behaviour.
 0 to 50 phone numbers; that site publishes no email address, so `emails` stays
 empty there.
 
-[Unreleased]: https://github.com/lucasmartins-ai/lookacrawler/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/lucasmartins-ai/lookacrawler/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/lucasmartins-ai/lookacrawler/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/lucasmartins-ai/lookacrawler/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/lucasmartins-ai/lookacrawler/releases/tag/v1.0.0
