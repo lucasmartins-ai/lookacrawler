@@ -185,6 +185,27 @@ export async function mapWebsite(options: MapWebsiteOptions): Promise<MapWebsite
 }
 
 /**
+ * Pull every outbound href out of an already-extracted markdown document.
+ *
+ * Covers both link formats we emit: inline `[text](url)` and the footnote
+ * reference block (`[1]: https://...`) produced by `link_format: references`.
+ * `strip` yields neither, which is why the caller falls back to a refetch.
+ */
+export function extractHrefsFromMarkdown(markdown: string): string[] {
+  const hrefs: string[] = [];
+  const inline = /\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = inline.exec(markdown)) !== null) {
+    hrefs.push(m[1]);
+  }
+  const footnote = /^\[\d+\]:\s*(\S+)/gm;
+  while ((m = footnote.exec(markdown)) !== null) {
+    hrefs.push(m[1]);
+  }
+  return hrefs;
+}
+
+/**
  * Perform autonomous, recursive website crawling with depth boundaries, regex route filtering, and token accounting.
  */
 export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlWebsiteResult> {
@@ -278,12 +299,22 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
           // If depth allows, discover outgoing links from this page
           if (depth < maxDepth && pages.length + queue.length < maxPages * 2) {
             try {
-              const html = await fetchHtml(currentUrl, { timeoutMs: 5000, headers, cookies, proxy });
-              const dom = new JSDOM(html, { url: currentUrl });
-              const anchors = Array.from(dom.window.document.querySelectorAll("a[href]"));
+              // Reuse the markdown we already have instead of re-fetching the
+              // page. A second fetchHtml doubles the traffic and, in `deep`
+              // mode, returns raw SPA markup with an empty <div id="root">, so
+              // link discovery silently found nothing and the crawl stopped.
+              // The rendered markdown carries every href the browser saw.
+              let hrefs = extractHrefsFromMarkdown(markdown);
+              if (hrefs.length === 0 && linkFormat === "strip") {
+                // `strip` removes URLs by design; the page may still be worth
+                // one extra fetch if it has no other way to expose its links.
+                const html = await fetchHtml(currentUrl, { timeoutMs: 5000, headers, cookies, proxy });
+                const dom = new JSDOM(html, { url: currentUrl });
+                hrefs = Array.from(dom.window.document.querySelectorAll("a[href]"))
+                  .map((a) => a.getAttribute("href") || "");
+              }
 
-              for (const a of anchors) {
-                const href = a.getAttribute("href");
+              for (const href of hrefs) {
                 if (!href) continue;
                 try {
                   const resolved = new URL(href, currentUrl);

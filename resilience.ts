@@ -190,7 +190,32 @@ export class ProxyManager {
       this.proxies.push(proxyUrl);
     }
   }
+
+  get size(): number {
+    return this.proxies.length;
+  }
 }
+
+/**
+ * Process-wide proxy pool, fed once from `LOOKACRAWLER_PROXIES`.
+ *
+ * The pool previously existed as a tested-but-never-instantiated class, so
+ * `--proxy` took exactly one URL per run and an IP block could not be routed
+ * around. One shared instance now sits on both the fetch and the browser path,
+ * so every request without an explicit `--proxy` pulls the next entry.
+ *
+ * Format: comma or whitespace separated URLs, e.g.
+ *   LOOKACRAWLER_PROXIES="http://p1:8080,socks5://p2:1080"
+ *
+ * ponytail: round-robin only, no health scoring or per-domain stickiness.
+ * Add sticky sessions when a target actually needs session affinity.
+ */
+export const proxyPool = new ProxyManager(
+  (process.env.LOOKACRAWLER_PROXIES || "")
+    .split(/[\s,]+/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+);
 
 export interface RetryOptions {
   maxRetries?: number;

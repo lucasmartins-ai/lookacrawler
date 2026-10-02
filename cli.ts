@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { formatJinaReader } from "./jina-format.js";
 
-import { writeFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 import { toSafeCsv } from "./csv-safe.js";
 
 const VERSION = "1.0.0";
@@ -24,6 +24,7 @@ Commands:
   structured <url>           Extract metadata and CSS-selector schema JSON from a URL.
   maps <query> [location]     Discover local B2B prospects via the Google Maps engine.
   enrich <url>                Enrich a company website (emails, socials, decision makers).
+  enrich-batch <file>         Enrich every website listed in a JSON file ({title, website}[]).
   serve                       Start the MCP server (stdio or SSE HTTP transport).
   --help, -h                  Show this help text.
   --version, -v               Show version number.
@@ -43,6 +44,16 @@ Options for 'extract':
 Options for 'contacts':
   --no-deep                   Skip crawling linked contact/about subpages.
   --output, -o <file>         Write JSON output to a file.
+
+Options for 'maps':
+  --email                     Let the scraper extract public emails (slower).
+  --location <text>           Location passed to the Maps engine.
+  --limit <n>                 Maximum leads (default: 20).
+
+Options for 'enrich-batch':
+  --concurrency <n>           Parallel enrichments (default: 3).
+  --mode <fast|deep>          Crawl mode (default: fast).
+  --output, -o <file>         Write JSON array to a file.
 
 Options for 'places':
   --limit <n>                 Maximum places to return (default: 5).
@@ -260,6 +271,7 @@ async function runCli() {
         location,
         limit,
         fastMode: args.includes("--fast-mode"),
+        extractEmails: args.includes("--email"),
       });
       const outputJson = JSON.stringify(res, null, 2);
       if (outputFile) {
@@ -299,6 +311,56 @@ async function runCli() {
     } catch (err: any) {
       console.error(`Enrichment error: ${err.message || err}`);
       process.exit(1);
+    }
+    return;
+  }
+
+  if (command === "enrich-batch") {
+    const { deepEnrichLead } = await import("./enrichment-bridge.js");
+    if (positionalUrls.length === 0) {
+      console.error("Error: JSON file is required (e.g. lookacrawler enrich-batch leads.json)");
+      process.exit(1);
+    }
+    const inputFile = positionalUrls[0];
+    const mode = getOption(args, "--mode") === "deep" ? "deep" : "fast";
+    const concurrency = Math.max(1, parseInt(getOption(args, "--concurrency") || "3", 10));
+    const outputFile = getOption(args, "--output") || getOption(args, "-o");
+
+    let leads: Array<{ title: string; website: string }>;
+    try {
+      const parsed = JSON.parse(await readFile(inputFile, "utf8"));
+      leads = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.leads) ? parsed.leads : [];
+      if (leads.length === 0) throw new Error("no leads found (expected a JSON array of {title, website})");
+    } catch (err: any) {
+      console.error(`Input error: ${err.message || err}`);
+      process.exit(1);
+      return;
+    }
+
+    // Bounded worker pool. A plain `for await` serialised every site; each
+    // enrichment is one network round trip, so 20 leads took 20x the time of
+    // the slowest. ponytail: fixed concurrency, no queue/retry layer.
+    const results: unknown[] = new Array(leads.length);
+    let cursor = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, leads.length) }, async () => {
+        while (cursor < leads.length) {
+          const i = cursor++;
+          const lead = leads[i];
+          results[i] = await deepEnrichLead(
+            { title: lead.title || lead.website, web_site: lead.website },
+            { mode }
+          );
+        }
+      })
+    );
+
+    const outputJson = JSON.stringify(results, null, 2);
+    if (outputFile) {
+      await writeFile(outputFile, outputJson, "utf8");
+      console.log(`Enriched ${results.length} leads. Saved to ${outputFile}`);
+    } else {
+      console.log(outputJson);
     }
     return;
   }

@@ -8,6 +8,7 @@ import {
   detectAntiBot,
   globalRateLimiter,
   retryWithBackoff,
+  proxyPool,
   type AntiBotCheckResult,
 } from "./resilience.js";
 import { getBrowser, getStealthInit } from "./browser-manager.js";
@@ -110,8 +111,11 @@ export async function fetchHtml(
       headers: requestHeaders,
     };
 
-    if (proxy) {
-      fetchOpts.proxy = proxy;
+    // An explicit --proxy always wins; otherwise pull the next entry from the
+    // LOOKACRAWLER_PROXIES pool so a blocked IP is not fatal for the whole run.
+    const effectiveProxy = proxyPool.getProxy(proxy);
+    if (effectiveProxy) {
+      fetchOpts.proxy = effectiveProxy;
     }
     // MITM-intercepting proxies (corporate TLS inspection, some residential
     // providers) present a forged cert. Bun has no per-request TLS knob we can
@@ -439,8 +443,20 @@ async function extractFastOnce(options: FastExtractOptions): Promise<string> {
  * Allowed network resource types for lightweight SPA rendering.
  * ALLOW: document, script, fetch, xhr
  * ABORT: image, stylesheet, font, media, other
+ *
+ * `sub_frame` is allowed deliberately: Cloudflare Turnstile, hCaptcha and
+ * reCAPTCHA v3 render inside an iframe, and aborting it guarantees the
+ * challenge never loads, so the page never resolves and the escalation to
+ * `deep` is wasted. Stylesheets stay blocked (they are the bulk of the byte
+ * savings) — the challenge widget brings its own inline styles.
  */
-const ALLOWED_RESOURCE_TYPES = new Set(["document", "script", "fetch", "xhr"]);
+const ALLOWED_RESOURCE_TYPES = new Set([
+  "document",
+  "script",
+  "fetch",
+  "xhr",
+  "sub_frame",
+]);
 
 /**
  * Execute Deep Extraction pipeline (Playwright Chromium Engine with Stealth & Proxy):
@@ -480,7 +496,7 @@ async function extractDeepOnce(options: DeepExtractOptions): Promise<string> {
         try {
           await validateTargetUrl(url);
           await globalRateLimiter.throttle(url);
-          const browser = await getBrowser(proxy);
+          const browser = await getBrowser(proxyPool.getProxy(proxy));
 
           context = await browser.newContext({
             // Mirrors LOOKACRAWLER_INSECURE_TLS: needed only behind a
@@ -767,7 +783,7 @@ export async function fetchRawHtml(
         try {
           await validateTargetUrl(url);
           await globalRateLimiter.throttle(url);
-          const browser = await getBrowser(proxy);
+          const browser = await getBrowser(proxyPool.getProxy(proxy));
           context = await browser.newContext({
             // Mirrors LOOKACRAWLER_INSECURE_TLS: needed only behind a
             // TLS-intercepting proxy, never by default.
