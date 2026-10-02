@@ -2,6 +2,7 @@
 import { formatJinaReader } from "./jina-format.js";
 
 import { writeFile } from "fs/promises";
+import { toSafeCsv } from "./csv-safe.js";
 
 const VERSION = "1.0.0";
 
@@ -15,10 +16,14 @@ Usage:
 
 Commands:
   extract <url>               Extract token-optimized Markdown from a URL.
+  contacts <url>              Extract emails, phones, WhatsApp links and social profiles.
+  places <query>              Search local businesses on Google Maps.
   map <url>                   Discover domain URLs via robots.txt, sitemaps, and links.
   crawl <url>                 Recursively crawl pages within domain boundaries.
   batch <url1> <url2>...     Batch extract content from multiple URLs concurrently.
   structured <url>           Extract metadata and CSS-selector schema JSON from a URL.
+  maps <query> [location]     Discover local B2B prospects via the Google Maps engine.
+  enrich <url>                Enrich a company website (emails, socials, decision makers).
   serve                       Start the MCP server (stdio or SSE HTTP transport).
   --help, -h                  Show this help text.
   --version, -v               Show version number.
@@ -34,6 +39,15 @@ Options for 'extract':
   --json                      Output formatted JSON response with statistics.
   --jina-format               Output Jina Reader-compatible metadata headers.
   --no-cache                  Bypass local SQLite cache.
+
+Options for 'contacts':
+  --no-deep                   Skip crawling linked contact/about subpages.
+  --output, -o <file>         Write JSON output to a file.
+
+Options for 'places':
+  --limit <n>                 Maximum places to return (default: 5).
+  --csv                       Output as formula-injection-safe CSV instead of JSON.
+  --output, -o <file>         Write output to a file.
 
 Options for 'map':
   --max-urls <n>              Maximum discovered URLs to return (default: 1000).
@@ -160,6 +174,130 @@ async function runCli() {
       }
     } catch (err: any) {
       console.error(`Extraction error: ${err.message || err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === "contacts") {
+    const { extractContacts } = await import("./contacts.js");
+    if (positionalUrls.length === 0) {
+      console.error("Error: Missing target URL for 'contacts' command.");
+      process.exit(1);
+    }
+    const url = positionalUrls[0];
+    const deepScan = !args.includes("--no-deep");
+    const outputFile = getOption(args, "--output") || getOption(args, "-o");
+
+    try {
+      const result = await extractContacts({ url, deepScan });
+      const outputJson = JSON.stringify(result, null, 2);
+      if (outputFile) {
+        await writeFile(outputFile, outputJson, "utf8");
+        console.log(`Contacts output saved to ${outputFile}`);
+      } else {
+        console.log(outputJson);
+      }
+    } catch (err: any) {
+      console.error(`Contacts extraction error: ${err.message || err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === "places") {
+    const { searchPlaces } = await import("./places.js");
+    if (positionalUrls.length === 0) {
+      console.error("Error: Missing search query for 'places' command.");
+      process.exit(1);
+    }
+    const query = positionalUrls.join(" ");
+    const limit = getOption(args, "--limit") ? parseInt(getOption(args, "--limit")!, 10) : 5;
+    const isCsv = args.includes("--csv");
+    const outputFile = getOption(args, "--output") || getOption(args, "-o");
+
+    try {
+      const result = await searchPlaces({ query, limit });
+      let outputText: string;
+      if (isCsv) {
+        const headers = ["Title", "Address", "Phone", "Website", "Rating", "ReviewCount", "Latitude", "Longitude", "URL"];
+        const rows = result.places.map((p) => [
+          p.title, p.address ?? "", p.phone ?? "", p.website ?? "",
+          p.rating ?? "", p.reviewCount ?? "", p.latitude ?? "", p.longitude ?? "", p.url ?? "",
+        ]);
+        outputText = toSafeCsv(headers, rows);
+      } else {
+        outputText = JSON.stringify(result, null, 2);
+      }
+
+      if (outputFile) {
+        await writeFile(outputFile, outputText, "utf8");
+        console.log(`Places result saved to ${outputFile}`);
+      } else {
+        console.log(outputText);
+      }
+    } catch (err: any) {
+      console.error(`Places search error: ${err.message || err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === "maps") {
+    const { discoverLocalLeads } = await import("./maps-bridge.js");
+    const query = positionalUrls[0];
+    const location = positionalUrls[1] || getOption(args, "--location");
+    const limit = parseInt(getOption(args, "--limit") || "20", 10);
+    const outputFile = getOption(args, "--output") || getOption(args, "-o");
+
+    if (!query) {
+      console.error("Error: search query is required (e.g. lookacrawler maps 'clinica odontologica' 'Goiania')");
+      process.exit(1);
+    }
+
+    try {
+      const res = await discoverLocalLeads(query, {
+        location,
+        limit,
+        fastMode: args.includes("--fast-mode"),
+      });
+      const outputJson = JSON.stringify(res, null, 2);
+      if (outputFile) {
+        await writeFile(outputFile, outputJson, "utf8");
+        console.log(`Found ${res.total} leads. Saved to ${outputFile}`);
+      } else {
+        console.log(outputJson);
+      }
+    } catch (err: any) {
+      console.error(`Maps discovery error: ${err.message || err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === "enrich") {
+    const { deepEnrichLead } = await import("./enrichment-bridge.js");
+    if (positionalUrls.length === 0) {
+      console.error("Error: URL is required (e.g. lookacrawler enrich https://example.com)");
+      process.exit(1);
+    }
+
+    const url = positionalUrls[0];
+    const title = getOption(args, "--title") || url;
+    const mode = getOption(args, "--mode") === "deep" ? "deep" : "fast";
+    const outputFile = getOption(args, "--output") || getOption(args, "-o");
+
+    try {
+      const res = await deepEnrichLead({ title, web_site: url }, { mode });
+      const outputJson = JSON.stringify(res, null, 2);
+      if (outputFile) {
+        await writeFile(outputFile, outputJson, "utf8");
+        console.log(`Enrichment complete. Saved to ${outputFile}`);
+      } else {
+        console.log(outputJson);
+      }
+    } catch (err: any) {
+      console.error(`Enrichment error: ${err.message || err}`);
       process.exit(1);
     }
     return;
@@ -337,6 +475,9 @@ function getPositionalArgs(args: string[], command: string): string[] {
     "--transport",
     "--port",
     "--host",
+    "--location",
+    "--limit",
+    "--title",
   ]);
 
   const positional: string[] = [];

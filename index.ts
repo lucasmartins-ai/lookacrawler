@@ -454,6 +454,150 @@ server.registerTool(
 );
 
 /**
+ * Define the `extract_contacts` tool
+ */
+server.registerTool(
+  "extract_contacts",
+  {
+    description: `Extract verified contact information (emails, phone numbers, WhatsApp links, and social media profiles) from a website and its contact subpages. Drastically saves tokens compared to feeding the entire raw DOM to the LLM.`,
+    inputSchema: {
+      url: z.string().url().describe("Target website URL to extract contact details from."),
+      deep_scan: z
+        .boolean()
+        .default(true)
+        .optional()
+        .describe("Whether to scan linked contact and about subpages (/contato, /about) for emails (default: true)."),
+    },
+  },
+  async ({ url, deep_scan }) => {
+    try {
+      const { extractContacts } = await import("./contacts.js");
+      const result = await extractContacts({ url, deepScan: deep_scan });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error: any) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Contact extraction failed: ${error.message || String(error)}` }],
+      };
+    }
+  }
+);
+
+/**
+ * Define the `search_places` tool
+ */
+server.registerTool(
+  "search_places",
+  {
+    description: `Search for local businesses, places, and establishments on Google Maps, extracting structured entity data (title, address, phone, website, coordinates, rating).`,
+    inputSchema: {
+      query: z.string().describe("Search query (e.g. 'restaurantes em Pinheiros Sao Paulo', 'dentists in Bristol')."),
+      limit: z.number().int().min(1).max(20).default(5).optional().describe("Maximum number of places to retrieve (default: 5, max: 20)."),
+    },
+  },
+  async ({ query, limit }) => {
+    try {
+      const { searchPlaces } = await import("./places.js");
+      const result = await searchPlaces({ query, limit });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error: any) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Search places failed: ${error.message || String(error)}` }],
+      };
+    }
+  }
+);
+
+/**
+ * Define the `discover_local_leads` tool (Google Maps Scraper engine)
+ */
+server.registerTool(
+  "discover_local_leads",
+  {
+    description: `Discover local businesses, establishments, and B2B prospects using the Google Maps engine.
+Extracts title, category, formatted address, telephone, WhatsApp link, rating, review count, coordinates, and website URL.`,
+    inputSchema: {
+      query: z.string().describe("Target business niche or search term (e.g. 'dental clinic', 'vet clinic', 'coworking')"),
+      location: z.string().optional().describe("City, neighborhood, or state (e.g. 'Bristol', 'Goiania')"),
+      limit: z.number().int().min(1).max(100).default(20).optional().describe("Maximum number of places to retrieve (default: 20)"),
+      lang: z.string().default("pt").optional().describe("Google Maps language code (default: 'pt')"),
+    },
+  },
+  async ({ query, location, limit, lang }) => {
+    try {
+      const { discoverLocalLeads } = await import("./maps-bridge.js");
+      const res = await discoverLocalLeads(query, { location, limit, lang });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              { query: res.query, total: res.total, executionTimeMs: res.executionTimeMs, leads: res.data },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    } catch (error: any) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Google Maps discovery failed: ${error.message || String(error)}` }],
+      };
+    }
+  }
+);
+
+/**
+ * Define the `deep_enrich_lead` tool (LookaCrawler token-optimized enrichment)
+ */
+server.registerTool(
+  "deep_enrich_lead",
+  {
+    description: `Deeply enrich a business lead by crawling its official website with LookaCrawler's token-optimized engine.
+Extracts verified emails, social media links (Instagram, LinkedIn), decision makers / founders, and generates a concise Markdown summary (<300 tokens) for LLMs.`,
+    inputSchema: {
+      title: z.string().describe("Company or establishment name"),
+      website: z.string().url().describe("Company official website URL to crawl"),
+      category: z.string().optional().describe("Company category or niche"),
+      phone: z.string().optional().describe("Known phone number"),
+      whatsapp: z.string().optional().describe("Known WhatsApp link"),
+      mode: z.enum(["fast", "deep"]).default("fast").optional().describe("Crawl mode: 'fast' (HTTP) or 'deep' (stealth Playwright)"),
+      link_format: z.enum(["inline", "references", "strip"]).default("references").optional().describe("Link formatting: references footnotes for token savings"),
+      image_mode: z.enum(["markdown", "alt_only", "ignore"]).default("alt_only").optional().describe("Image mode: alt_only avoids CDN bloat"),
+    },
+  },
+  async ({ title, website, category, phone, whatsapp, mode, link_format, image_mode }) => {
+    try {
+      const { deepEnrichLead } = await import("./enrichment-bridge.js");
+      const result = await deepEnrichLead(
+        {
+          title,
+          web_site: website,
+          category,
+          phone,
+          whatsapp_link: whatsapp,
+        },
+        { mode, linkFormat: link_format, imageMode: image_mode }
+      );
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error: any) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Deep enrichment failed: ${error.message || String(error)}` }],
+      };
+    }
+  }
+);
+
+/**
  * Register MCP Resources
  */
 server.registerResource(

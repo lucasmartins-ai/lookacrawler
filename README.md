@@ -54,9 +54,11 @@ Web crawling for Large Language Models (LLMs) is broken by default: modern web p
   - `fast`: Ultra-fast native HTTP GET with backoff. Auto-escalates to `deep` if an anti-bot challenge is encountered.
   - `deep`: Headless Playwright engine launching real Google Chrome with stealth patches (`navigator.webdriver` cleared, WebGL spoofed, CDP leaks stripped) to transparently crawl Cloudflare/Turnstile-protected pages.
 - **Native MCP Ecosystem:**
-  - **Tools:** `extract_web_content`, `crawl_website`, `map_website`, `batch_extract_web_content`, `extract_structured_data`.
+  - **Tools:** `extract_web_content`, `crawl_website`, `map_website`, `batch_extract_web_content`, `extract_structured_data`, `extract_contacts`, `search_places`, `discover_local_leads`, `deep_enrich_lead`.
   - **Resources:** Live telemetry at `crawler://metrics` and cache analytics at `crawler://cache/stats`.
   - **Prompts:** Pre-engineered templates `crawl-and-summarize` and `compare-pages`.
+- **Entity Extraction:** `contacts` pulls emails, phone numbers, WhatsApp links and social profiles; `places` returns structured Google Maps business records with formula-injection-safe CSV output.
+- **B2B Lead Discovery:** `maps` (Google Maps engine) plus `enrich`, which crawls a company's own site for verified emails, socials and decision makers.
 - **Local SQLite Caching:** Stores extracted Markdown in `crawler_cache.sqlite` to eliminate duplicate network calls.
 - **Structured JSON & Metadata Extraction:** Extracts Open Graph tags (`og:title`, `og:description`), publication dates, canonical URLs, and custom CSS selectors.
 
@@ -121,9 +123,26 @@ bun run cli.ts batch https://site1.com https://site2.com --concurrency 4
 # Structured JSON schema extraction
 bun run cli.ts structured https://example.com --schema '{"title":"h1","links":"a"}'
 
+# Extract emails, phones, WhatsApp links and social profiles from a site
+bun run cli.ts contacts https://example.com
+
+# Search local businesses on Google Maps (browser-driven)
+bun run cli.ts places "dentists in Bristol" --limit 5 --csv -o places.csv
+
+# B2B lead discovery via the sibling google-maps-scraper engine
+# (set MAPS_LEADS_BIN if the binary is not in a standard path)
+bun run cli.ts maps "dental clinic" "Bristol" --limit 20
+
+# Enrich a company website: emails, socials, decision makers, short summary
+bun run cli.ts enrich https://example.com --title "Example Ltd" --mode fast
+
 # Start MCP Server via SSE on port 3000
 bun run cli.ts serve --transport sse --port 3000
 ```
+
+> **Behind a TLS-intercepting proxy?** Export `LOOKACRAWLER_INSECURE_TLS=true` to
+> accept the proxy's forged certificate. Off by default — never enable it for
+> untrusted networks.
 
 ### 3. Docker Deployment
 

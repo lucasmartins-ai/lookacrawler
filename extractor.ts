@@ -113,6 +113,13 @@ export async function fetchHtml(
     if (proxy) {
       fetchOpts.proxy = proxy;
     }
+    // MITM-intercepting proxies (corporate TLS inspection, some residential
+    // providers) present a forged cert. Bun has no per-request TLS knob we can
+    // trust, so this is process-wide and opt-in — never the default.
+    // ponytail: one env var, no config file. Split per-request when Bun exposes it.
+    if (process.env.LOOKACRAWLER_INSECURE_TLS === "true") {
+      fetchOpts.tls = { rejectUnauthorized: false };
+    }
 
     let currentUrl = url;
     let response: Response | undefined;
@@ -476,6 +483,9 @@ async function extractDeepOnce(options: DeepExtractOptions): Promise<string> {
           const browser = await getBrowser(proxy);
 
           context = await browser.newContext({
+            // Mirrors LOOKACRAWLER_INSECURE_TLS: needed only behind a
+            // TLS-intercepting proxy, never by default.
+            ...(process.env.LOOKACRAWLER_INSECURE_TLS === "true" ? { ignoreHTTPSErrors: true } : {}),
             userAgent:
               headers?.["User-Agent"] ||
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -759,6 +769,9 @@ export async function fetchRawHtml(
           await globalRateLimiter.throttle(url);
           const browser = await getBrowser(proxy);
           context = await browser.newContext({
+            // Mirrors LOOKACRAWLER_INSECURE_TLS: needed only behind a
+            // TLS-intercepting proxy, never by default.
+            ...(process.env.LOOKACRAWLER_INSECURE_TLS === "true" ? { ignoreHTTPSErrors: true } : {}),
             userAgent:
               headers?.["User-Agent"] ||
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
