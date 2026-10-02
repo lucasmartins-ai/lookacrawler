@@ -26,6 +26,9 @@ const CHALLENGE_SIGNATURES = [
   "cloudflarecaptcha",
   "challenges.cloudflare.com",
   "ddos-guard",
+  // DataDome / PerimeterX / Akamai interstitial copy. These pages render no
+  // captcha widget, so the DOM-marker check below misses them entirely.
+  "enable javascript and cookies to continue",
 ];
 
 const CAPTCHA_DOM_MARKERS = [

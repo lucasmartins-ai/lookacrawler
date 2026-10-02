@@ -35,6 +35,18 @@ describe("Resilience Module (resilience.ts)", () => {
       expect(detectAntiBot(200, captchaHtml).isBlocked).toBe(true);
     });
 
+    test("should detect widget-less bot interstitials", () => {
+      // DataDome / PerimeterX / Akamai render no captcha element, so the
+      // DOM-marker pass cannot see them. Their copy is the only signal.
+      const interstitials = [
+        "<html><body>Please enable JavaScript and cookies to continue</body></html>",
+        "<html><body><h1>Checking your browser before accessing</h1></body></html>",
+      ];
+      for (const html of interstitials) {
+        expect(detectAntiBot(200, html).isBlocked).toBe(true);
+      }
+    });
+
     test("should NOT block legitimate 200 OK article discussing access denied or security checks", () => {
       const legitArticle = `
         <html>
