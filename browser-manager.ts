@@ -3,6 +3,7 @@ import { chromium } from "playwright";
 import { buildStealthInit } from "./stealth.js";
 import { getEgressGuard } from "./egress-guard.js";
 import { isLocalAccessAllowed, validateProxyUrl } from "./security.js";
+import { registerCleanup } from "./lifecycle.js";
 
 const browsers = new Map<string, Promise<Browser>>();
 
@@ -190,3 +191,5 @@ export async function closeBrowsers(): Promise<void> {
     result.status === "fulfilled" ? result.value.close().catch(() => {}) : Promise.resolve()
   ));
 }
+
+registerCleanup(closeBrowsers);

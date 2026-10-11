@@ -4,7 +4,7 @@ import { formatJinaReader } from "./jina-format.js";
 import { readFile, writeFile } from "fs/promises";
 import { toSafeCsv } from "./csv-safe.js";
 
-const VERSION = "1.1.0";
+const VERSION = "1.1.2";
 
 function showHelp() {
   console.log(`
@@ -122,7 +122,7 @@ async function runCli() {
   if (command === "serve") {
     // Forward to index.ts server
     await import("./index.js");
-    return;
+    return "serve";
   }
 
   const positionalUrls = getPositionalArgs(args, command);
@@ -572,4 +572,19 @@ function getOption(args: string[], flag: string): string | undefined {
   return undefined;
 }
 
-runCli();
+async function main() {
+  const outcome = await runCli();
+  if (outcome === "serve") return;
+  // One-shot commands: close Chromium and the egress guard, otherwise their
+  // handles keep the event loop alive and the process never exits.
+  const { runCleanups } = await import("./lifecycle.js");
+  await runCleanups();
+  // Safety net for any other stray handle; unref'd so it never delays a
+  // process that is already free to exit.
+  setTimeout(() => process.exit(process.exitCode ?? 0), 2_000).unref();
+}
+
+main().catch((err) => {
+  console.error(err?.message || err);
+  process.exit(1);
+});

@@ -2,6 +2,7 @@ import { createServer, request as httpRequest, type IncomingMessage, type Server
 import net from "node:net";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { resolvePublicAddress } from "./security.js";
+import { registerCleanup } from "./lifecycle.js";
 
 /**
  * Egress guard: a tiny loopback HTTP/CONNECT proxy that every outbound
@@ -213,3 +214,5 @@ export async function stopEgressGuard(): Promise<void> {
   guardPromise = null;
   if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
 }
+
+registerCleanup(stopEgressGuard);
