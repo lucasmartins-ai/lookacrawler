@@ -3,8 +3,9 @@ import { formatJinaReader } from "./jina-format.js";
 
 import { readFile, writeFile } from "fs/promises";
 import { toSafeCsv } from "./csv-safe.js";
+import { closeBrowsers } from "./browser-manager.js";
 
-const VERSION = "1.1.0";
+const VERSION = "1.1.1";
 
 function showHelp() {
   console.log(`
@@ -572,4 +573,10 @@ function getOption(args: string[], flag: string): string | undefined {
   return undefined;
 }
 
-runCli();
+// `serve` keeps running; every other command must release Chromium or a
+// deep-mode run leaves the process hanging after printing its output.
+if (process.argv[2] === "serve") {
+  runCli();
+} else {
+  runCli().finally(() => closeBrowsers());
+}

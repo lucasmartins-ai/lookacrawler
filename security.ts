@@ -1,4 +1,5 @@
 import { lookup } from "node:dns/promises";
+import { timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 
 const MAX_RESPONSE_BYTES = Number(process.env.LOOKACRAWLER_MAX_RESPONSE_BYTES || 10 * 1024 * 1024);
@@ -36,6 +37,9 @@ export function isPrivateAddress(address: string): boolean {
   );
 }
 
+// ponytail: check-then-fetch. fetch() re-resolves DNS, so a rebinding server
+// can flip to a private IP between this check and the request (TOCTOU). Closing
+// it needs IP pinning (custom lookup/agent), which Bun's fetch doesn't expose yet.
 export async function validateTargetUrl(value: string): Promise<void> {
   let parsed: URL;
   try {
@@ -76,4 +80,72 @@ export async function validateTargetUrl(value: string): Promise<void> {
 
 export function getMaxResponseBytes(): number {
   return MAX_RESPONSE_BYTES;
+}
+
+/**
+ * Read a response body while enforcing the size cap *during* the read, so a
+ * server that omits Content-Length cannot make us buffer an unbounded body.
+ */
+export async function readBodyCapped(response: Response, maxBytes = MAX_RESPONSE_BYTES): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`Response exceeds maximum size of ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+export function isLoopbackHost(host: string): boolean {
+  return LOOPBACK_HOSTS.has(host.toLowerCase());
+}
+
+function hostnameOf(hostHeader: string): string {
+  // "[::1]:3000" -> "[::1]", "localhost:3000" -> "localhost"
+  return hostHeader.startsWith("[") ? hostHeader.slice(0, hostHeader.indexOf("]") + 1) : hostHeader.split(":")[0];
+}
+
+function tokenMatches(header: string | undefined, token: string): boolean {
+  const a = Buffer.from(header || "");
+  const b = Buffer.from(`Bearer ${token}`);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export interface SseGateInput {
+  bindHost: string;
+  token?: string;
+  allowedOrigins: string[];
+  headers: { host?: string; origin?: string; authorization?: string };
+}
+
+/**
+ * Decide whether an SSE-transport HTTP request may proceed.
+ * Returns null when allowed, or the status + error to reply with.
+ *
+ * - Loopback bind: Host header must be loopback (blocks DNS rebinding).
+ * - Any request carrying an Origin must match LOOKACRAWLER_CORS_ORIGIN
+ *   (browsers always send Origin cross-site; native MCP clients don't).
+ * - Token, when configured, is compared in constant time.
+ */
+export function checkSseRequest({ bindHost, token, allowedOrigins, headers }: SseGateInput): { status: number; error: string } | null {
+  if (isLoopbackHost(bindHost) && !isLoopbackHost(hostnameOf(headers.host || ""))) {
+    return { status: 403, error: "Forbidden host" };
+  }
+  if (headers.origin && !allowedOrigins.includes(headers.origin)) {
+    return { status: 403, error: "Forbidden origin" };
+  }
+  if (token && !tokenMatches(headers.authorization, token)) {
+    return { status: 401, error: "Unauthorized" };
+  }
+  return null;
 }

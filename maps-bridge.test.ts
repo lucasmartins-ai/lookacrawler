@@ -62,6 +62,6 @@ describe("Deep lead enrichment guards", () => {
   test("blocks private network targets (SSRF boundary)", async () => {
     const result = await deepEnrichLead({ title: "Local", web_site: "http://127.0.0.1:8080" });
     expect(result.enrichmentSuccess).toBe(false);
-    expect(result.error).toContain("seguran");
+    expect(result.error).toContain("security policy");
   });
 });

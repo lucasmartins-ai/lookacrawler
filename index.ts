@@ -14,8 +14,8 @@ import {
   type ImageMode,
   type PageAction,
 } from "./extractor.js";
-import { getCachedPage, setCachedPage, buildCacheKey, db } from "./cache.js";
-import { validateTargetUrl } from "./security.js";
+import { getCachedPage, setCachedPage, buildCacheKey, db, pruneExpiredCache } from "./cache.js";
+import { checkSseRequest, isLoopbackHost, validateTargetUrl } from "./security.js";
 import { getMetrics, recordMetric } from "./metrics.js";
 import { closeBrowsers } from "./browser-manager.js";
 
@@ -24,7 +24,7 @@ import { closeBrowsers } from "./browser-manager.js";
  */
 const server = new McpServer({
   name: "lookacrawler",
-  version: "1.1.0",
+  version: "1.1.1",
 });
 
 /**
@@ -707,6 +707,8 @@ server.registerPrompt(
  * Start input/output transport for MCP client communication (stdio or SSE HTTP)
  */
 async function main() {
+  // Keep the on-disk cache bounded: drop entries past TTL on every start.
+  pruneExpiredCache();
   const args = process.argv.slice(2);
   let transportMode = "stdio";
   let port = 3000;
@@ -736,21 +738,35 @@ async function main() {
   if (transportMode === "sse") {
     let sseTransport: SSEServerTransport | null = null;
     const token = process.env.LOOKACRAWLER_SSE_TOKEN;
+    if (!token && !isLoopbackHost(host)) {
+      throw new Error(
+        `Refusing to expose SSE on ${host} without LOOKACRAWLER_SSE_TOKEN. Set a token or bind to 127.0.0.1.`
+      );
+    }
+    const allowedOrigins = (process.env.LOOKACRAWLER_CORS_ORIGIN || "")
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean);
     const httpServer = createServer(async (req, res) => {
-      // Set permissive CORS headers for web agents and frontends
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      const origin = req.headers.origin;
+      if (origin && allowedOrigins.includes(origin)) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Vary", "Origin");
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      }
 
-      if (req.method === "OPTIONS") {
+      // CORS preflights never carry Authorization; answer them for allowed origins only.
+      if (req.method === "OPTIONS" && origin && allowedOrigins.includes(origin)) {
         res.writeHead(204);
         res.end();
         return;
       }
 
-      if (token && req.headers.authorization !== `Bearer ${token}`) {
-        res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Unauthorized" }));
+      const denied = checkSseRequest({ bindHost: host, token, allowedOrigins, headers: req.headers });
+      if (denied) {
+        res.writeHead(denied.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: denied.error }));
         return;
       }
       const url = new URL(req.url || "", `http://${req.headers.host || "localhost"}`);

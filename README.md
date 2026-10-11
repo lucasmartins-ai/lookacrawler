@@ -19,7 +19,7 @@
 
 Web crawling for Large Language Models (LLMs) is broken by default: modern web pages contain massive HTML bloat (scripts, tracking pixels, nested divs, navigation headers, stylesheets), costing thousands of wasted tokens per page.
 
-**LookaCrawler** is an open-source, token-optimized local crawler that strips >73% to 90% of web bloat, extracts clean Markdown, bypasses anti-bot barriers with stealth Playwright drivers, and exposes a native **Model Context Protocol (MCP) Server** ready for **Claude Desktop, Cursor, and Antigravity**.
+**LookaCrawler** is an open-source, token-optimized local crawler that cuts a median 86% of tokens on real pages (21–98% across 7 sites, see `benchmark-live.ts`), extracts clean Markdown, bypasses anti-bot barriers with stealth Playwright drivers, and exposes a native **Model Context Protocol (MCP) Server** ready for **Claude Desktop, Cursor, and Antigravity**.
 
 ---
 
@@ -28,7 +28,7 @@ Web crawling for Large Language Models (LLMs) is broken by default: modern web p
 | Feature | 🕷️ LookaCrawler | 🔥 Firecrawl (Cloud) | ⚡ Jina Reader |
 | :--- | :---: | :---: | :---: |
 | **Pricing / Cost** | **$0.00 (100% Free Open Source)** | $16 to $99+/month | Rate-limited API |
-| **Token Reduction** | **>73% to 90% pruning + Footnotes** | Standard Markdown | Basic Markdown |
+| **Token Reduction** | **Median 86% fewer tokens (real pages) + Footnotes** | Standard Markdown | Basic Markdown |
 | **Autonomous Crawling** | **Native `map` & `crawl` (BFS + Regex)** | Cloud Crawler | Single-page only |
 | **Pre-Crawl Actions** | **Native Playwright (click, scroll, fill)** | Paid Addon | None |
 | **Link Formatting** | **Inline, References Footnotes, Strip** | Inline only | Inline only |
@@ -139,9 +139,15 @@ bun run cli.ts enrich https://example.com --title "Example Ltd" --mode fast
 # Enrich many leads at once from a JSON array of {title, website}
 bun run cli.ts enrich-batch leads.json --concurrency 3 -o enriched.json
 
-# Start MCP Server via SSE on port 3000
+# Start MCP Server via SSE on port 3000 (loopback only)
 bun run cli.ts serve --transport sse --port 3000
 ```
+
+> **SSE security.** On `127.0.0.1` the server rejects requests whose `Host`
+> header is not loopback (DNS-rebinding guard). Binding to any other address
+> (e.g. `--host 0.0.0.0`) **requires** `LOOKACRAWLER_SSE_TOKEN`; clients send
+> `Authorization: Bearer <token>`. Browser requests are refused unless their
+> origin is listed in `LOOKACRAWLER_CORS_ORIGIN` (comma separated).
 
 > **Behind a TLS-intercepting proxy?** Export `LOOKACRAWLER_INSECURE_TLS=true` to
 > accept the proxy's forged certificate. Off by default — never enable it for
@@ -176,7 +182,7 @@ scraper extract public emails during discovery.
 ```bash
 # Build and run Docker container
 docker build -t lookacrawler .
-docker run -p 3000:3000 lookacrawler
+docker run -p 127.0.0.1:3000:3000 -e LOOKACRAWLER_SSE_TOKEN="$(openssl rand -hex 32)" lookacrawler
 ```
 
 ---

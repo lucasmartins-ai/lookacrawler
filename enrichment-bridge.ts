@@ -105,14 +105,14 @@ export async function deepEnrichLead(
   };
 
   if (!lead.web_site || !lead.web_site.startsWith("http")) {
-    result.error = "Lead não possui website válido para enriquecimento.";
+    result.error = "Lead has no valid website to enrich.";
     return result;
   }
 
   try {
     await validateTargetUrl(lead.web_site);
   } catch (secErr: any) {
-    result.error = `Website bloqueado por política de segurança: ${secErr?.message}`;
+    result.error = `Website blocked by security policy: ${secErr?.message}`;
     return result;
   }
 
@@ -273,7 +273,7 @@ export async function deepEnrichLead(
     result.estimatedTokens = Math.ceil(result.markdownSummary.length / 4);
     result.enrichmentSuccess = true;
   } catch (err: any) {
-    result.error = `Erro ao enriquecer lead via LookaCrawler: ${err?.message}`;
+    result.error = `Failed to enrich lead via LookaCrawler: ${err?.message}`;
   }
 
   return result;

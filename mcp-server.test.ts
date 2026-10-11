@@ -9,6 +9,7 @@ describe("LookaCrawler MCP Server HTTP/SSE Transport (index.ts)", () => {
       ["bun", "index.ts", "--transport", "sse", "--port", String(PORT), "--host", "127.0.0.1"],
       {
         cwd: import.meta.dir,
+        env: { ...process.env, LOOKACRAWLER_CORS_ORIGIN: "https://app.example" },
         stdout: "pipe",
         stderr: "pipe",
       }
@@ -54,14 +55,19 @@ describe("LookaCrawler MCP Server HTTP/SSE Transport (index.ts)", () => {
     expect(typeof metrics.bytesFetched).toBe("number");
   });
 
-  it("should support CORS preflight with 204 No Content and appropriate headers", async () => {
+  it("should answer CORS preflight only for allow-listed origins", async () => {
     const res = await fetch(`http://127.0.0.1:${PORT}/health`, {
       method: "OPTIONS",
+      headers: { Origin: "https://app.example" },
     });
     expect(res.status).toBe(204);
-    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://app.example");
     expect(res.headers.get("access-control-allow-methods")).toContain("GET");
     expect(res.headers.get("access-control-allow-headers")).toContain("Content-Type");
+
+    const evil = await fetch(`http://127.0.0.1:${PORT}/health`, { headers: { Origin: "https://evil.example" } });
+    expect(evil.status).toBe(403);
+    expect(evil.headers.get("access-control-allow-origin")).toBeNull();
   });
 
   it("should return 400 Bad Request when POSTing to /messages without active SSE session", async () => {

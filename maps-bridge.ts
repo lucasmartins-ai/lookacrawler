@@ -323,7 +323,7 @@ export async function discoverLocalLeadsViaDaemon(
 
   if (!createRes.ok) {
     const errText = await createRes.text().catch(() => "");
-    throw new Error(`Erro ao criar job no daemon (HTTP ${createRes.status}): ${errText}`);
+    throw new Error(`Failed to create daemon job (HTTP ${createRes.status}): ${errText}`);
   }
 
   const jobData: any = await createRes.json();
@@ -380,7 +380,7 @@ export async function discoverLocalLeadsViaDaemon(
   if (!resultsRes.ok) {
     const errText = await resultsRes.text().catch(() => "");
     throw new Error(
-      `Falha ao buscar resultados do job ${jobId} (HTTP ${resultsRes.status}): ${errText}`
+      `Failed to fetch results for job ${jobId} (HTTP ${resultsRes.status}): ${errText}`
     );
   }
 
@@ -435,7 +435,7 @@ export async function discoverLocalLeadsViaCli(
       query,
       executionTimeMs: Date.now() - startTime,
       source: "cli",
-      error: "Binário 'maps-leads' não encontrado nos caminhos padrão.",
+      error: "'maps-leads' binary not found in standard paths (set MAPS_LEADS_BIN).",
     };
   }
 
@@ -520,7 +520,7 @@ export async function discoverLocalLeadsViaCli(
         query: fullQuery,
         executionTimeMs: Date.now() - startTime,
         source: "cli",
-        error: `Falha ao iniciar processo maps-leads: ${err?.message}`,
+        error: `Failed to start maps-leads process: ${err?.message}`,
       });
     }
 
@@ -549,7 +549,7 @@ export async function discoverLocalLeadsViaCli(
         error:
           leads.length === 0 && code !== 0
             ? timedOut
-              ? "Timeout atingido durante busca no Google Maps."
+              ? "Timed out while searching Google Maps."
               : `Processo finalizou com erro (code ${code}): ${stderrBuffer.slice(0, 300)}`
             : undefined,
       });
@@ -640,7 +640,7 @@ export async function discoverLocalLeadsViaCli(
         query: fullQuery,
         executionTimeMs: Date.now() - startTime,
         source: "cli",
-        error: `Erro no processo maps-leads: ${err.message}`,
+        error: `maps-leads process error: ${err.message}`,
       });
     });
 

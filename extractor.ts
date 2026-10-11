@@ -3,7 +3,7 @@ import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
 // @ts-ignore - plugin lacks official types
 import { gfm } from "turndown-plugin-gfm";
-import type { Browser } from "playwright";
+import type { Browser, Route } from "playwright";
 import {
   detectAntiBot,
   globalRateLimiter,
@@ -12,7 +12,7 @@ import {
   type AntiBotCheckResult,
 } from "./resilience.js";
 import { getBrowser, getStealthInit } from "./browser-manager.js";
-import { getMaxResponseBytes, validateTargetUrl } from "./security.js";
+import { getMaxResponseBytes, readBodyCapped, validateTargetUrl } from "./security.js";
 import { buildCacheKey, getCachedPage, setCachedPage } from "./cache.js";
 import { recordMetric } from "./metrics.js";
 
@@ -141,10 +141,7 @@ export async function fetchHtml(
     if (contentLength > getMaxResponseBytes()) {
       throw new Error(`Response exceeds maximum size of ${getMaxResponseBytes()} bytes`);
     }
-    const htmlText = await response.text();
-    if (Buffer.byteLength(htmlText, "utf8") > getMaxResponseBytes()) {
-      throw new Error(`Response exceeds maximum size of ${getMaxResponseBytes()} bytes`);
-    }
+    const htmlText = await readBodyCapped(response);
     recordMetric("bytesFetched", Buffer.byteLength(htmlText, "utf8"));
 
     const antiBotCheck: AntiBotCheckResult = detectAntiBot(response.status, htmlText);
@@ -459,6 +456,22 @@ const ALLOWED_RESOURCE_TYPES = new Set([
 ]);
 
 /**
+ * Single request guard for every deep-mode page: blocks heavy resource types
+ * and runs the SSRF check on *every* allowed request — not just navigations —
+ * so page scripts cannot fetch()/XHR into private networks (e.g. 169.254.169.254).
+ */
+async function guardRoute(route: Route): Promise<void> {
+  const req = route.request();
+  if (!ALLOWED_RESOURCE_TYPES.has(req.resourceType())) return route.abort();
+  try {
+    await validateTargetUrl(req.url());
+  } catch {
+    return route.abort();
+  }
+  return route.continue();
+}
+
+/**
  * Execute Deep Extraction pipeline (Playwright Chromium Engine with Stealth & Proxy):
  * Headless Browser -> Request Interception (Resource Blocking) -> DOM Rendering -> Anti-Bot check -> Token Pipeline
  */
@@ -531,25 +544,7 @@ async function extractDeepOnce(options: DeepExtractOptions): Promise<string> {
           const page = await context.newPage();
 
           // Crucial Optimization: Request Interception & SSRF Navigation Protection
-          await page.route("**/*", async (route) => {
-            const req = route.request();
-            const resourceType = req.resourceType();
-
-            // Intercept navigations (including 301/302 redirects) to prevent SSRF
-            if (req.isNavigationRequest()) {
-              try {
-                await validateTargetUrl(req.url());
-              } catch {
-                return route.abort();
-              }
-            }
-
-            if (ALLOWED_RESOURCE_TYPES.has(resourceType)) {
-              return route.continue();
-            } else {
-              return route.abort();
-            }
-          });
+          await page.route("**/*", guardRoute);
 
           const response = await page.goto(url, {
             waitUntil: "domcontentloaded",
@@ -811,25 +806,7 @@ export async function fetchRawHtml(
             await context.addCookies(playwrightCookies);
           }
           const page = await context.newPage();
-          await page.route("**/*", async (route) => {
-            const req = route.request();
-            const resourceType = req.resourceType();
-
-            // Intercept navigations (including 301/302 redirects) to prevent SSRF
-            if (req.isNavigationRequest()) {
-              try {
-                await validateTargetUrl(req.url());
-              } catch {
-                return route.abort();
-              }
-            }
-
-            if (ALLOWED_RESOURCE_TYPES.has(resourceType)) {
-              return route.continue();
-            } else {
-              return route.abort();
-            }
-          });
+          await page.route("**/*", guardRoute);
           const response = await page.goto(url, {
             waitUntil: "domcontentloaded",
             timeout: timeoutMs,

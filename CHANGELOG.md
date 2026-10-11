@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+Security hardening and test hermeticity from the October 2026 audit.
+
+### Security
+
+- **SSE transport no longer trusts the browser.** CORS `*` is gone; browser
+  requests need their origin in `LOOKACRAWLER_CORS_ORIGIN`. On a loopback bind
+  the `Host` header must be loopback (DNS-rebinding guard). Binding to a
+  non-loopback address without `LOOKACRAWLER_SSE_TOKEN` now refuses to start,
+  and the token is compared in constant time. **Breaking for Docker:** pass
+  `-e LOOKACRAWLER_SSE_TOKEN=...`.
+- **Deep mode SSRF via subresources.** Only navigations were validated, so page
+  scripts could `fetch()` private addresses (e.g. cloud metadata). Every allowed
+  request now goes through `validateTargetUrl`; the two duplicated route
+  handlers are one `guardRoute`.
+- **Response size cap enforced while streaming.** Bodies without
+  `Content-Length` were buffered whole before the check.
+
+### Fixed
+
+- Tests are hermetic: an in-memory cache DB and stubbed DNS via `bunfig.toml`
+  preload. Previously the suite wiped the real `crawler_cache.sqlite` and
+  failed offline (11 failures).
+- Expired cache entries are pruned on server start; the cache grew unbounded.
+- CLI hung after `--mode deep`: Chromium was never closed. Non-`serve`
+  commands now call `closeBrowsers()` on exit.
+- Version strings synced to 1.1.1; Maps/enrichment error messages in English.
+
+### Changed
+
+- CI pins Bun 1.3.14, uses `--frozen-lockfile` and runs `tsc --noEmit`.
+- Token-savings claim re-measured on real pages (`benchmark-live.ts`): median
+  86%, range 21–98% over 7 sites, replacing the synthetic ">73%".
 
 ## [1.1.1] — 2026-10-02
 
