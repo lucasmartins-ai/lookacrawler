@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
 describe("LookaCrawler MCP Server HTTP/SSE Transport (index.ts)", () => {
   const PORT = 3999;
@@ -216,5 +218,80 @@ describe("LookaCrawler MCP Server on a non-loopback address", () => {
       headers: { Origin: "https://evil.example" },
     });
     expect(denied.status).toBe(403);
+  });
+});
+
+describe("LookaCrawler MCP Server concurrent SSE sessions", () => {
+  const PORT = 3996;
+  const MAX = 2;
+  let proc: any = null;
+
+  const connect = async () => {
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+    await client.connect(new SSEClientTransport(new URL(`http://127.0.0.1:${PORT}/sse`)));
+    return client;
+  };
+
+  beforeAll(async () => {
+    const env = { ...process.env };
+    delete env.LOOKACRAWLER_SSE_TOKEN;
+    proc = Bun.spawn(["bun", "index.ts", "--transport", "sse", "--port", String(PORT), "--host", "127.0.0.1"], {
+      cwd: import.meta.dir,
+      env: { ...env, LOOKACRAWLER_SSE_MAX_SESSIONS: String(MAX) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    for (let i = 0; i < 70; i++) {
+      try {
+        if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) break;
+      } catch {
+        // not ready yet
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }, 15000);
+
+  afterAll(() => proc?.kill());
+
+  it("serves several clients at the same time, each with its own session", async () => {
+    const a = await connect();
+    const b = await connect();
+    try {
+      const [toolsA, toolsB] = await Promise.all([a.listTools(), b.listTools()]);
+      expect(toolsA.tools.map((t) => t.name)).toContain("extract_web_content");
+      expect(toolsB.tools.length).toBe(toolsA.tools.length);
+      expect(a.getServerVersion()?.name).toBe("lookacrawler");
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  }, 20000);
+
+  it("caps the number of open sessions and frees a slot when a client leaves", async () => {
+    const a = await connect();
+    const b = await connect();
+    try {
+      const refused = await fetch(`http://127.0.0.1:${PORT}/sse`);
+      expect(refused.status).toBe(503);
+      await refused.body?.cancel();
+
+      await b.close();
+      await new Promise((r) => setTimeout(r, 300));
+      const c = await connect();
+      expect((await c.listTools()).tools.length).toBeGreaterThan(0);
+      await c.close();
+    } finally {
+      await a.close();
+      await b.close().catch(() => {});
+    }
+  }, 20000);
+
+  it("does not route messages to a session id that does not exist", async () => {
+    const res = await fetch(`http://127.0.0.1:${PORT}/messages?sessionId=not-a-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "ping", id: 1 }),
+    });
+    expect(res.status).toBe(400);
   });
 });
