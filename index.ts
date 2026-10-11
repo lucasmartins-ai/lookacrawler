@@ -7,6 +7,7 @@ import type { LinkFormat, ImageMode, PageAction } from "./extractor.js";
 import { getCachedPage, setCachedPage, buildCacheKey, pruneExpiredCache, db } from "./cache.js";
 import { validateTargetUrl } from "./security.js";
 import { getMetrics, recordMetric } from "./metrics.js";
+import { checkSseRequest, corsHeaders, resolveSseSecurity } from "./sse-security.js";
 
 // The extraction pipeline (jsdom + playwright) takes ~2.5s to import. Loading it
 // on first use lets the MCP handshake complete immediately, the same way the
@@ -737,13 +738,40 @@ async function main() {
   }
 
   if (transportMode === "sse") {
+    const security = resolveSseSecurity(host, port);
+    if (security.generatedToken) {
+      console.error(
+        `[lookacrawler] SSE is bound to ${host} and LOOKACRAWLER_SSE_TOKEN is not set.\n` +
+          `[lookacrawler] Generated a token for this run; clients must send "Authorization: Bearer ${security.token}".\n` +
+          `[lookacrawler] Set LOOKACRAWLER_SSE_TOKEN to keep a stable token across restarts.`
+      );
+    } else if (!security.token && !security.loopback) {
+      console.error(
+        `[lookacrawler] WARNING: SSE server on ${host} WITHOUT authentication (LOOKACRAWLER_SSE_ALLOW_UNAUTHENTICATED=true).`
+      );
+    }
+
+    // One MCP session at a time (the McpServer instance holds a single
+    // transport). The session must be fully released on disconnect, otherwise
+    // server.connect() refuses every later client and the slot stays taken.
     let sseTransport: SSEServerTransport | null = null;
-    const token = process.env.LOOKACRAWLER_SSE_TOKEN;
+    const releaseSession = async (transport: SSEServerTransport) => {
+      if (sseTransport !== transport) return;
+      sseTransport = null;
+      await server.close().catch(() => {});
+    };
+
     const httpServer = createServer(async (req, res) => {
-      // Set permissive CORS headers for web agents and frontends
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      for (const [name, value] of Object.entries(corsHeaders(req, security))) {
+        res.setHeader(name, value);
+      }
+
+      const verdict = checkSseRequest(req, security);
+      if (!verdict.ok) {
+        res.writeHead(verdict.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: verdict.error }));
+        return;
+      }
 
       if (req.method === "OPTIONS") {
         res.writeHead(204);
@@ -751,29 +779,32 @@ async function main() {
         return;
       }
 
-      if (token && req.headers.authorization !== `Bearer ${token}`) {
-        res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Unauthorized" }));
-        return;
-      }
-      const url = new URL(req.url || "", `http://${req.headers.host || "localhost"}`);
+      const url = new URL(req.url || "", "http://localhost");
       if (url.pathname === "/health" && req.method === "GET") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", metrics: getMetrics() }));
       } else if (url.pathname === "/metrics" && req.method === "GET") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(getMetrics()));
-      } else if (url.pathname === "/sse") {
+      } else if (url.pathname === "/sse" && req.method === "GET") {
         if (sseTransport) {
           res.writeHead(409, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "An SSE session is already active" }));
           return;
         }
-        res.on("close", () => { sseTransport = null; });
-        sseTransport = new SSEServerTransport("/messages", res);
-        await server.connect(sseTransport);
+        const transport = new SSEServerTransport("/messages", res);
+        sseTransport = transport;
+        res.on("close", () => void releaseSession(transport));
+        try {
+          await server.connect(transport);
+        } catch (error) {
+          await releaseSession(transport);
+          if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Failed to start SSE session" }));
+          console.error("[lookacrawler] SSE session failed:", error);
+        }
       } else if (url.pathname === "/messages" && req.method === "POST") {
-        if (sseTransport) {
+        if (sseTransport && url.searchParams.get("sessionId") === sseTransport.sessionId) {
           await sseTransport.handlePostMessage(req, res);
         } else {
           res.writeHead(400, { "Content-Type": "application/json" });

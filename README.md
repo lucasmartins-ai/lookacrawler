@@ -151,6 +151,27 @@ bun run cli.ts serve --transport sse --port 3000
 > whitespace separated list of URLs. Every request without an explicit
 > `--proxy` pulls the next entry, so one blocked IP is not fatal for the run.
 
+> **Local proxy (Tor, mitmproxy, a sidecar)?** A `proxy` passed per request
+> must be a public host. List trusted local proxies in
+> `LOOKACRAWLER_ALLOWED_PROXIES` (comma separated, exact URLs); entries in
+> `LOOKACRAWLER_PROXIES` are trusted too.
+
+#### SSE server security
+
+| Variable | Effect |
+| --- | --- |
+| `LOOKACRAWLER_SSE_TOKEN` | Bearer token required on every request. If the server is bound to a non-loopback address (e.g. `--host 0.0.0.0`) and this is unset, a random token is generated and printed at startup. |
+| `LOOKACRAWLER_SSE_ALLOWED_ORIGINS` | Comma-separated web origins allowed to call the server from a browser (CORS). Requests with any other `Origin` header are refused. CLI/desktop MCP clients are unaffected. |
+| `LOOKACRAWLER_SSE_ALLOW_UNAUTHENTICATED` | `true` disables the token requirement on non-loopback binds. Only for isolated networks. |
+| `LOOKACRAWLER_MAX_BROWSERS` | Maximum concurrent Chromium processes (one per distinct proxy). Default `4`; idle ones are closed after `LOOKACRAWLER_BROWSER_IDLE_MS` (default 120000). |
+
+Outbound connections without a proxy go through a built-in loopback egress
+guard that resolves each destination once, refuses private/link-local/loopback
+addresses and connects to exactly the IP it checked. This covers redirects and
+requests a page makes on its own (fetch, XHR, WebSocket) in `deep` mode, and
+prevents DNS rebinding. `LOOKACRAWLER_ALLOW_LOCAL=true` turns all of this off
+(for local development only).
+
 ### 3. Google Maps engine (optional)
 
 The `maps` command and the `discover_local_leads` MCP tool delegate to a sibling
@@ -176,8 +197,12 @@ scraper extract public emails during discovery.
 ```bash
 # Build and run Docker container
 docker build -t lookacrawler .
-docker run -p 3000:3000 lookacrawler
+docker run -p 3000:3000 -e LOOKACRAWLER_SSE_TOKEN="$(openssl rand -hex 24)" lookacrawler
 ```
+
+The container listens on `0.0.0.0`, so a token is always required. Without
+`LOOKACRAWLER_SSE_TOKEN` a random one is generated on each start and printed in
+the container logs.
 
 ---
 

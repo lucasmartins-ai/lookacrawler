@@ -55,14 +55,36 @@ describe("LookaCrawler MCP Server HTTP/SSE Transport (index.ts)", () => {
     expect(typeof metrics.bytesFetched).toBe("number");
   });
 
-  it("should support CORS preflight with 204 No Content and appropriate headers", async () => {
-    const res = await fetch(`http://127.0.0.1:${PORT}/health`, {
-      method: "OPTIONS",
-    });
+  it("should not grant CORS to arbitrary origins", async () => {
+    const res = await fetch(`http://127.0.0.1:${PORT}/health`, { method: "OPTIONS" });
     expect(res.status).toBe(204);
-    expect(res.headers.get("access-control-allow-origin")).toBe("*");
-    expect(res.headers.get("access-control-allow-methods")).toContain("GET");
-    expect(res.headers.get("access-control-allow-headers")).toContain("Content-Type");
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("should refuse requests sent by a web page (Origin header) unless allowlisted", async () => {
+    const res = await fetch(`http://127.0.0.1:${PORT}/sse`, { headers: { Origin: "https://evil.example" } });
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("Origin not allowed");
+  });
+
+  it("should refuse a non-loopback Host header (DNS rebinding) when running without a token", async () => {
+    const res = await fetch(`http://127.0.0.1:${PORT}/health`, { headers: { Host: "rebind.evil.example:3999" } });
+    expect(res.status).toBe(403);
+  });
+
+  it("should accept a new SSE session after the previous client disconnects", async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = new AbortController();
+      const res = await fetch(`http://127.0.0.1:${PORT}/sse`, { signal: controller.signal });
+      expect(res.status).toBe(200);
+      const reader = res.body!.getReader();
+      const { value } = await reader.read();
+      expect(new TextDecoder().decode(value)).toContain("/messages?sessionId=");
+      controller.abort();
+      await reader.cancel().catch(() => {});
+      await new Promise((r) => setTimeout(r, 300));
+    }
   });
 
   it("should return 400 Bad Request when POSTing to /messages without active SSE session", async () => {
@@ -137,5 +159,62 @@ describe("LookaCrawler MCP Server Bearer Authentication", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe("ok");
+  });
+});
+
+describe("LookaCrawler MCP Server on a non-loopback address", () => {
+  const PORT = 3997;
+  let proc: any = null;
+  let stderr = "";
+
+  beforeAll(async () => {
+    const env = { ...process.env };
+    delete env.LOOKACRAWLER_SSE_TOKEN;
+    proc = Bun.spawn(["bun", "index.ts", "--transport", "sse", "--port", String(PORT), "--host", "0.0.0.0"], {
+      cwd: import.meta.dir,
+      env: { ...env, LOOKACRAWLER_SSE_ALLOWED_ORIGINS: "https://app.example" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = proc.stderr.getReader();
+    const deadline = Date.now() + 14000;
+    while (!stderr.includes("Bearer ") && Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += new TextDecoder().decode(value);
+    }
+    for (let i = 0; i < 70; i++) {
+      try {
+        await fetch(`http://127.0.0.1:${PORT}/health`);
+        break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+  }, 15000);
+
+  afterAll(() => proc?.kill());
+
+  it("requires a token even when none is configured, generating one at startup", async () => {
+    const token = /Bearer ([A-Za-z0-9_-]+)/.exec(stderr)?.[1];
+    expect(token).toBeDefined();
+    expect((await fetch(`http://127.0.0.1:${PORT}/health`)).status).toBe(401);
+    const ok = await fetch(`http://127.0.0.1:${PORT}/health`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(ok.status).toBe(200);
+  });
+
+  it("grants CORS only to allowlisted origins", async () => {
+    const allowed = await fetch(`http://127.0.0.1:${PORT}/health`, {
+      method: "OPTIONS",
+      headers: { Origin: "https://app.example" },
+    });
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers.get("access-control-allow-origin")).toBe("https://app.example");
+
+    const denied = await fetch(`http://127.0.0.1:${PORT}/health`, {
+      method: "OPTIONS",
+      headers: { Origin: "https://evil.example" },
+    });
+    expect(denied.status).toBe(403);
   });
 });

@@ -37,6 +37,9 @@ COPY . .
 
 EXPOSE 3000
 
+# Binding to 0.0.0.0 makes the server reachable from outside the container, so
+# it always requires a bearer token: pass -e LOOKACRAWLER_SSE_TOKEN=..., or one
+# is generated at startup and printed in the logs.
 ENV HOST=0.0.0.0
 ENV PORT=3000
 

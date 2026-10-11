@@ -7,7 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Security
+- `deep` mode: every outbound connection (redirect hops, page-initiated
+  fetch/XHR/WebSocket included) now goes through a loopback egress guard that
+  pins the validated IP, closing redirect-based SSRF and DNS rebinding. The
+  final URL and redirect chain are re-validated as well.
+- `fast` mode: connections are pinned the same way; the response size cap is
+  enforced while streaming, so responses without `Content-Length` can no longer
+  exhaust memory.
+- Caller `Cookie`, `Authorization` and custom headers are no longer sent after a
+  cross-origin redirect, and in `deep` mode headers are only sent to the target
+  origin (previously to every third-party request).
+- Per-request `proxy` values are validated (scheme, no path, no
+  private/local host); trusted local proxies can be listed in
+  `LOOKACRAWLER_ALLOWED_PROXIES`.
+- Concurrent Chromium processes are capped (`LOOKACRAWLER_MAX_BROWSERS`) and idle
+  ones are closed.
+- SSE server: a token is mandatory on non-loopback binds (generated if unset),
+  CORS is limited to `LOOKACRAWLER_SSE_ALLOWED_ORIGINS` instead of `*`, browser
+  requests from other origins and non-loopback `Host` headers are refused, and
+  the token check is constant-time.
+- `isPrivateAddress` recognises IPv4-mapped (`::ffff:7f00:1`), NAT64 and 6to4
+  encodings of internal addresses.
+
+### Fixed
+- SSE server: a new client can connect after the previous one disconnects
+  (previously every later connection got `409` until restart).
 
 ## [1.1.1] — 2026-10-02
 
