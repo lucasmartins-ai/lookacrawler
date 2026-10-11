@@ -2,7 +2,7 @@
   "$schema": "https://glama.ai/mcp/schemas/server.json",
   "maintainers": ["lucasmartins-ai"],
   "name": "LookaCrawler",
-  "description": "Free, open-source, token-efficient local crawler with a native MCP Server: cuts a median 86% of tokens on real pages to clean Markdown, bypasses anti-bot via stealth Playwright, and exposes stdio/SSE transports.",
+  "description": "Free, open-source, token-efficient local crawler with a native MCP Server: cuts a median 90% of tokens on real pages to clean Markdown, bypasses anti-bot via stealth Playwright, and exposes stdio/SSE transports.",
   "categories": ["Web Scraping", "Browser Automation", "Research & Data"],
   "transport": "stdio",
   "buildSpec": {

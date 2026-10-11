@@ -37,5 +37,6 @@ for (const url of URLS) {
 }
 
 const sorted = [...savings].sort((a, b) => a - b);
-const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : NaN;
+const mid = Math.floor(sorted.length / 2);
+const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 console.log(`\n${savings.length}/${URLS.length} pages · min ${sorted[0]?.toFixed(1)}% · median ${median.toFixed(1)}% · max ${sorted.at(-1)?.toFixed(1)}%`);

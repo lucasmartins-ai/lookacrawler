@@ -19,7 +19,7 @@
 
 Web crawling for Large Language Models (LLMs) is broken by default: modern web pages contain massive HTML bloat (scripts, tracking pixels, nested divs, navigation headers, stylesheets), costing thousands of wasted tokens per page.
 
-**LookaCrawler** is an open-source, token-optimized local crawler that cuts a median 86% of tokens on real pages (21–98% across 7 sites, see `benchmark-live.ts`), extracts clean Markdown, bypasses anti-bot barriers with stealth Playwright drivers, and exposes a native **Model Context Protocol (MCP) Server** ready for **Claude Desktop, Cursor, and Antigravity**.
+**LookaCrawler** is an open-source, token-optimized local crawler that cuts a median 90% of tokens on real pages (21–98% across 8 sites, see `benchmark-live.ts`), extracts clean Markdown, bypasses anti-bot barriers with stealth Playwright drivers, and exposes a native **Model Context Protocol (MCP) Server** ready for **Claude Desktop, Cursor, and Antigravity**.
 
 ---
 
@@ -28,7 +28,7 @@ Web crawling for Large Language Models (LLMs) is broken by default: modern web p
 | Feature | 🕷️ LookaCrawler | 🔥 Firecrawl (Cloud) | ⚡ Jina Reader |
 | :--- | :---: | :---: | :---: |
 | **Pricing / Cost** | **$0.00 (100% Free Open Source)** | $16 to $99+/month | Rate-limited API |
-| **Token Reduction** | **Median 86% fewer tokens (real pages) + Footnotes** | Standard Markdown | Basic Markdown |
+| **Token Reduction** | **Median 90% fewer tokens (real pages) + Footnotes** | Standard Markdown | Basic Markdown |
 | **Autonomous Crawling** | **Native `map` & `crawl` (BFS + Regex)** | Cloud Crawler | Single-page only |
 | **Pre-Crawl Actions** | **Native Playwright (click, scroll, fill)** | Paid Addon | None |
 | **Link Formatting** | **Inline, References Footnotes, Strip** | Inline only | Inline only |

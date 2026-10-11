@@ -30,6 +30,9 @@ Security hardening and test hermeticity from the October 2026 audit.
   preload. Previously the suite wiped the real `crawler_cache.sqlite` and
   failed offline (11 failures).
 - Expired cache entries are pruned on server start; the cache grew unbounded.
+- Link-heavy pages (news homepages) returned empty Markdown: link-density
+  pruning removed the whole content container. When pruning strips >75% of the
+  output, the page is re-rendered without it.
 - CLI hung after `--mode deep`: Chromium was never closed. Non-`serve`
   commands now call `closeBrowsers()` on exit.
 - Version strings synced to 1.1.1; Maps/enrichment error messages in English.
@@ -38,7 +41,7 @@ Security hardening and test hermeticity from the October 2026 audit.
 
 - CI pins Bun 1.3.14, uses `--frozen-lockfile` and runs `tsc --noEmit`.
 - Token-savings claim re-measured on real pages (`benchmark-live.ts`): median
-  86%, range 21–98% over 7 sites, replacing the synthetic ">73%".
+  90%, range 21–98% over 8 sites, replacing the synthetic ">73%".
 
 ## [1.1.1] — 2026-10-02
 

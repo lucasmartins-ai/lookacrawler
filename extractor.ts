@@ -282,12 +282,34 @@ export function processHtmlToMarkdown(
   return processDocumentToMarkdown(dom.window.document, cssSelector, url, linkFormat, imageMode);
 }
 
+/** Below this, a pruned result is treated as "the heuristic ate the page". */
+const MIN_USEFUL_MARKDOWN_CHARS = 200;
+
 function processDocumentToMarkdown(
   document: Document,
   cssSelector?: string,
   baseUrl?: string,
   linkFormat: LinkFormat = "inline",
   imageMode: ImageMode = "ignore"
+): string {
+  // Link-density pruning drops menus, but on link-heavy pages (news homepages,
+  // where every headline card is an <a>) it removes the content itself and
+  // returns nothing. Keep an untouched copy and fall back to it in that case.
+  const unpruned = document.cloneNode(true) as Document;
+  const markdown = renderDocument(document, cssSelector, baseUrl, linkFormat, imageMode, true);
+  if (markdown.length >= MIN_USEFUL_MARKDOWN_CHARS) return markdown;
+  const fallback = renderDocument(unpruned, cssSelector, baseUrl, linkFormat, imageMode, false);
+  // Only when pruning removed most of the page; a small page losing its tag cloud is fine.
+  return markdown.length < fallback.length * 0.25 ? fallback : markdown;
+}
+
+function renderDocument(
+  document: Document,
+  cssSelector: string | undefined,
+  baseUrl: string | undefined,
+  linkFormat: LinkFormat,
+  imageMode: ImageMode,
+  pruneLinks: boolean
 ): string {
   // 1. Resolve relative URLs to absolute URLs
   if (baseUrl) {
@@ -340,7 +362,7 @@ function processDocumentToMarkdown(
   }
 
   // 3. Prune high link density boilerplate
-  pruneHighLinkDensityElements(document);
+  if (pruneLinks) pruneHighLinkDensityElements(document);
 
   const references: string[] = [];
   const turndownService = createTurndownService({ imageMode, linkFormat, references });
