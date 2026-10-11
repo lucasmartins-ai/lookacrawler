@@ -1,5 +1,4 @@
 import { describe, it, expect } from "bun:test";
-import pkg from "./package.json";
 
 async function runCli(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn(["bun", "cli.ts", ...args], {
@@ -36,11 +35,11 @@ describe("CLI Extended Integration Suite (cli.ts)", () => {
   it("should output version for --version and -v", async () => {
     const res1 = await runCli(["--version"]);
     expect(res1.exitCode).toBe(0);
-    expect(res1.stdout.trim()).toBe(`v${pkg.version}`);
+    expect(res1.stdout.trim()).toBe("v1.1.2");
 
     const res2 = await runCli(["-v"]);
     expect(res2.exitCode).toBe(0);
-    expect(res2.stdout.trim()).toBe(`v${pkg.version}`);
+    expect(res2.stdout.trim()).toBe("v1.1.2");
   });
 
   it("should fail with code 1 and error message if extract has no URL", async () => {

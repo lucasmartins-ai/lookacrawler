@@ -14,6 +14,12 @@ export function sanitizeCsvCell(value: string | number | boolean | null | undefi
     return "";
   }
 
+  // A number cannot carry a formula, and prefixing it turns coordinates such as
+  // -16.68 into text in Excel/Sheets.
+  if (typeof value === "number") {
+    return String(value);
+  }
+
   const str = String(value);
   if (str.length === 0) {
     return str;
@@ -50,7 +56,7 @@ export function toSafeCsv(
   headers: string[],
   rows: (string | number | boolean | null | undefined)[][]
 ): string {
-  function escapeField(field: string): string {
+  function escapeField(field: string | number | boolean | null | undefined): string {
     const sanitized = sanitizeCsvCell(field);
     if (
       sanitized.includes(",") ||
@@ -64,7 +70,7 @@ export function toSafeCsv(
   }
 
   const headerLine = headers.map(escapeField).join(",");
-  const rowLines = rows.map((row) => row.map((val) => escapeField(String(val ?? ""))).join(","));
+  const rowLines = rows.map((row) => row.map((val) => escapeField(val)).join(","));
 
   return [headerLine, ...rowLines].join("\r\n");
 }

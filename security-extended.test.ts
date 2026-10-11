@@ -101,6 +101,14 @@ describe("Security Module Extended (security.ts)", () => {
       expect(isPrivateAddress("2606:4700:4700::1111")).toBe(false);
       expect(isPrivateAddress("::ffff:8.8.8.8")).toBe(false);
     });
+
+    it("should not treat hostnames that start with IPv6 prefixes as private", () => {
+      expect(isPrivateAddress("fda.gov")).toBe(false);
+      expect(isPrivateAddress("fc2.com")).toBe(false);
+      expect(isPrivateAddress("fcbarcelona.com")).toBe(false);
+      expect(isPrivateAddress("fdic.gov")).toBe(false);
+      expect(isPrivateAddress("fe80.example.com")).toBe(false);
+    });
   });
 
   describe("validateTargetUrl integration with host checks", () => {

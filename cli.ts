@@ -3,9 +3,8 @@ import { formatJinaReader } from "./jina-format.js";
 
 import { readFile, writeFile } from "fs/promises";
 import { toSafeCsv } from "./csv-safe.js";
-import { closeBrowsers } from "./browser-manager.js";
 
-const VERSION = "1.1.1";
+const VERSION = "1.1.2";
 
 function showHelp() {
   console.log(`
@@ -123,7 +122,7 @@ async function runCli() {
   if (command === "serve") {
     // Forward to index.ts server
     await import("./index.js");
-    return;
+    return "serve";
   }
 
   const positionalUrls = getPositionalArgs(args, command);
@@ -573,10 +572,19 @@ function getOption(args: string[], flag: string): string | undefined {
   return undefined;
 }
 
-// `serve` keeps running; every other command must release Chromium or a
-// deep-mode run leaves the process hanging after printing its output.
-if (process.argv[2] === "serve") {
-  runCli();
-} else {
-  runCli().finally(() => closeBrowsers());
+async function main() {
+  const outcome = await runCli();
+  if (outcome === "serve") return;
+  // One-shot commands: close Chromium and the egress guard, otherwise their
+  // handles keep the event loop alive and the process never exits.
+  const { runCleanups } = await import("./lifecycle.js");
+  await runCleanups(3_000);
+  // Safety net for any other stray handle; unref'd so it never delays a
+  // process that is already free to exit.
+  setTimeout(() => process.exit(process.exitCode ?? 0), 2_000).unref();
 }
+
+main().catch((err) => {
+  console.error(err?.message || err);
+  process.exit(1);
+});

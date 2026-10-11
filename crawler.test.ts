@@ -4,13 +4,34 @@ import { mapWebsite, crawlWebsite } from "./crawler.js";
 describe("Autonomous Web Crawler & Mapper (crawler.ts)", () => {
   let server: ReturnType<typeof Bun.serve>;
   let serverUrl: string;
+  const requestLog: Array<{ path: string; start: number; end?: number }> = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
 
   beforeAll(() => {
     process.env.LOOKACRAWLER_ALLOW_LOCAL = "true";
     server = Bun.serve({
       port: 0,
-      fetch(req) {
+      async fetch(req) {
         const url = new URL(req.url);
+
+        if (url.pathname.startsWith("/pool/")) {
+          const entry: { path: string; start: number; end?: number } = { path: url.pathname, start: performance.now() };
+          requestLog.push(entry);
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          if (url.pathname === "/pool/slow") await Bun.sleep(1500);
+          inFlight--;
+          entry.end = performance.now();
+          const links =
+            url.pathname === "/pool/hub"
+              ? ["slow", "f1", "f2", "f3"].map((p) => `<a href="/pool/${p}">${p}</a>`).join("")
+              : "";
+          return new Response(
+            `<!DOCTYPE html><html><body><h1>${url.pathname}</h1><p>Pool test page content.</p>${links}</body></html>`,
+            { headers: { "Content-Type": "text/html" } }
+          );
+        }
 
         if (url.pathname === "/robots.txt") {
           return new Response(
@@ -205,6 +226,24 @@ describe("Autonomous Web Crawler & Mapper (crawler.ts)", () => {
       });
 
       expect(result.pages.length).toBeLessThanOrEqual(2);
+    });
+
+    test("should refill a crawl slot as soon as a page finishes instead of waiting for the batch", async () => {
+      const result = await crawlWebsite({
+        startUrl: `${serverUrl}/pool/hub`,
+        maxDepth: 1,
+        maxPages: 5,
+        concurrency: 2,
+        mode: "fast",
+      });
+
+      expect(result.pages.length).toBe(5);
+      expect(maxInFlight).toBeLessThanOrEqual(2);
+
+      // With fixed waves, /pool/f2 only started after /pool/slow returned.
+      const slow = requestLog.find((r) => r.path === "/pool/slow")!;
+      const f2 = requestLog.find((r) => r.path === "/pool/f2")!;
+      expect(f2.start).toBeLessThan(slow.end!);
     });
 
     test("should support linkFormat: 'references' during crawling", async () => {

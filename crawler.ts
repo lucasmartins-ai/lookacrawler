@@ -256,96 +256,109 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
   const visited = new Set<string>([startUrl]);
   const pages: CrawledPage[] = [];
 
-  while (queue.length > 0 && pages.length < maxPages) {
-    const currentBatch = queue.splice(0, Math.min(concurrency, maxPages - pages.length));
+  const crawlPage = async ({ url: currentUrl, depth }: { url: string; depth: number }): Promise<void> => {
+    try {
+      let markdown: string;
+      if (mode === "deep") {
+        markdown = await extractDeep({
+          url: currentUrl,
+          timeoutMs,
+          headers,
+          cookies,
+          proxy,
+          linkFormat,
+          imageMode,
+        });
+      } else {
+        markdown = await extractFast({
+          url: currentUrl,
+          timeoutMs,
+          headers,
+          cookies,
+          proxy,
+          linkFormat,
+          imageMode,
+        });
+      }
 
-    await Promise.all(
-      currentBatch.map(async ({ url: currentUrl, depth }) => {
+      const charCount = markdown.length;
+      const estimatedTokens = Math.ceil(charCount / 4);
+
+      pages.push({
+        url: currentUrl,
+        depth,
+        markdown,
+        charCount,
+        estimatedTokens,
+      });
+
+      // If depth allows, discover outgoing links from this page
+      if (depth < maxDepth && pages.length + queue.length < maxPages * 2) {
         try {
-          let markdown: string;
-          if (mode === "deep") {
-            markdown = await extractDeep({
-              url: currentUrl,
-              timeoutMs,
-              headers,
-              cookies,
-              proxy,
-              linkFormat,
-              imageMode,
-            });
-          } else {
-            markdown = await extractFast({
-              url: currentUrl,
-              timeoutMs,
-              headers,
-              cookies,
-              proxy,
-              linkFormat,
-              imageMode,
-            });
+          // Reuse the markdown we already have instead of re-fetching the
+          // page. A second fetchHtml doubles the traffic and, in `deep`
+          // mode, returns raw SPA markup with an empty <div id="root">, so
+          // link discovery silently found nothing and the crawl stopped.
+          // The rendered markdown carries every href the browser saw.
+          let hrefs = extractHrefsFromMarkdown(markdown);
+          if (hrefs.length === 0 && linkFormat === "strip") {
+            // `strip` removes URLs by design; the page may still be worth
+            // one extra fetch if it has no other way to expose its links.
+            const html = await fetchHtml(currentUrl, { timeoutMs: 5000, headers, cookies, proxy });
+            const dom = new JSDOM(html, { url: currentUrl });
+            hrefs = Array.from(dom.window.document.querySelectorAll("a[href]"))
+              .map((a) => a.getAttribute("href") || "");
           }
 
-          const charCount = markdown.length;
-          const estimatedTokens = Math.ceil(charCount / 4);
-
-          pages.push({
-            url: currentUrl,
-            depth,
-            markdown,
-            charCount,
-            estimatedTokens,
-          });
-
-          // If depth allows, discover outgoing links from this page
-          if (depth < maxDepth && pages.length + queue.length < maxPages * 2) {
+          for (const href of hrefs) {
+            if (!href) continue;
             try {
-              // Reuse the markdown we already have instead of re-fetching the
-              // page. A second fetchHtml doubles the traffic and, in `deep`
-              // mode, returns raw SPA markup with an empty <div id="root">, so
-              // link discovery silently found nothing and the crawl stopped.
-              // The rendered markdown carries every href the browser saw.
-              let hrefs = extractHrefsFromMarkdown(markdown);
-              if (hrefs.length === 0 && linkFormat === "strip") {
-                // `strip` removes URLs by design; the page may still be worth
-                // one extra fetch if it has no other way to expose its links.
-                const html = await fetchHtml(currentUrl, { timeoutMs: 5000, headers, cookies, proxy });
-                const dom = new JSDOM(html, { url: currentUrl });
-                hrefs = Array.from(dom.window.document.querySelectorAll("a[href]"))
-                  .map((a) => a.getAttribute("href") || "");
-              }
+              const resolved = new URL(href, currentUrl);
+              resolved.hash = "";
+              const normalizedUrl = resolved.toString();
 
-              for (const href of hrefs) {
-                if (!href) continue;
-                try {
-                  const resolved = new URL(href, currentUrl);
-                  resolved.hash = "";
-                  const normalizedUrl = resolved.toString();
-
-                  if (!visited.has(normalizedUrl) && isUrlAllowed(normalizedUrl)) {
-                    visited.add(normalizedUrl);
-                    queue.push({ url: normalizedUrl, depth: depth + 1 });
-                  }
-                } catch {
-                  /* skip */
-                }
+              if (!visited.has(normalizedUrl) && isUrlAllowed(normalizedUrl)) {
+                visited.add(normalizedUrl);
+                queue.push({ url: normalizedUrl, depth: depth + 1 });
               }
             } catch {
-              /* link discovery error ignored */
+              /* skip */
             }
           }
-        } catch (err: any) {
-          pages.push({
-            url: currentUrl,
-            depth,
-            markdown: "",
-            charCount: 0,
-            estimatedTokens: 0,
-            error: err.message || String(err),
-          });
+        } catch {
+          /* link discovery error ignored */
         }
-      })
-    );
-  }
+      }
+    } catch (err: any) {
+      pages.push({
+        url: currentUrl,
+        depth,
+        markdown: "",
+        charCount: 0,
+        estimatedTokens: 0,
+        error: err.message || String(err),
+      });
+    }
+  };
+
+  // Worker pool: a slot is refilled as soon as its page finishes. Fixed-size
+  // waves (`Promise.all` per batch) left every slot idle until the slowest page
+  // of the batch returned.
+  let inFlight = 0;
+  await new Promise<void>((resolve) => {
+    const pump = () => {
+      while (inFlight < concurrency && queue.length > 0 && pages.length + inFlight < maxPages) {
+        const item = queue.shift()!;
+        inFlight++;
+        crawlPage(item).finally(() => {
+          inFlight--;
+          pump();
+        });
+      }
+      if (inFlight === 0) resolve();
+    };
+    pump();
+  });
 
   const totalEstimatedTokens = pages.reduce((sum, p) => sum + p.estimatedTokens, 0);
 

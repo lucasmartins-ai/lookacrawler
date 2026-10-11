@@ -274,6 +274,10 @@ export function parseCoordinatesFromUrl(url: string): { latitude?: number; longi
   return {};
 }
 
+// Missing fields are common (no phone, no website). Without an explicit timeout
+// each lookup waits Playwright's default 30s for an element that never appears.
+const DETAIL_FIELD_TIMEOUT_MS = 1500;
+
 async function extractSinglePlaceDetails(page: any, title: string): Promise<PlaceEntity> {
   let address: string | undefined;
   let phone: string | undefined;
@@ -284,25 +288,25 @@ async function extractSinglePlaceDetails(page: any, title: string): Promise<Plac
   try {
     // Address button usually has data-item-id="address" or aria-label starting with Endereço
     const addressEl = page.locator('button[data-item-id="address"], [data-tooltip="Copiar endereço"]');
-    address = (await addressEl.first().textContent())?.trim();
+    address = (await addressEl.first().textContent({ timeout: DETAIL_FIELD_TIMEOUT_MS }))?.trim();
   } catch {}
 
   try {
     // Phone button
     const phoneEl = page.locator('button[data-item-id*="phone"], [data-tooltip="Copiar número de telefone"]');
-    phone = (await phoneEl.first().textContent())?.trim();
+    phone = (await phoneEl.first().textContent({ timeout: DETAIL_FIELD_TIMEOUT_MS }))?.trim();
   } catch {}
 
   try {
     // Website anchor
     const siteEl = page.locator('a[data-item-id="authority"], [aria-label*="Website"], [aria-label*="Site"]');
-    website = await siteEl.first().getAttribute("href");
+    website = await siteEl.first().getAttribute("href", { timeout: DETAIL_FIELD_TIMEOUT_MS });
   } catch {}
 
   try {
     // Rating span
     const ratingEl = page.locator('span.ceNzKf, span[aria-hidden="true"]:has-text(",")');
-    const ratingText = await ratingEl.first().textContent();
+    const ratingText = await ratingEl.first().textContent({ timeout: DETAIL_FIELD_TIMEOUT_MS });
     if (ratingText) {
       rating = parseFloat(ratingText.replace(",", "."));
     }

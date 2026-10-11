@@ -3,7 +3,7 @@ import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
 // @ts-ignore - plugin lacks official types
 import { gfm } from "turndown-plugin-gfm";
-import type { Browser, Route } from "playwright";
+import type { Browser, Page, Response as PlaywrightResponse } from "playwright";
 import {
   detectAntiBot,
   globalRateLimiter,
@@ -12,7 +12,8 @@ import {
   type AntiBotCheckResult,
 } from "./resilience.js";
 import { getBrowser, getStealthInit } from "./browser-manager.js";
-import { getMaxResponseBytes, readBodyCapped, validateTargetUrl } from "./security.js";
+import { getMaxResponseBytes, isLocalAccessAllowed, validateProxyUrl, validateTargetUrl } from "./security.js";
+import { BLOCKED_HEADER, getEgressGuard } from "./egress-guard.js";
 import { buildCacheKey, getCachedPage, setCachedPage } from "./cache.js";
 import { recordMetric } from "./metrics.js";
 
@@ -71,6 +72,55 @@ function serializeCookies(cookies?: Record<string, string>): string | undefined 
     .join("; ");
 }
 
+/** Headers that carry caller credentials and must not follow a cross-origin redirect. */
+const CREDENTIAL_HEADERS = new Set(["authorization", "cookie", "proxy-authorization"]);
+const SAFE_CROSS_ORIGIN_HEADERS = new Set(["user-agent", "accept", "accept-language", "accept-encoding"]);
+
+/**
+ * Drop credentials before following a redirect to another origin: the Cookie
+ * and Authorization headers plus any custom header the caller supplied (API
+ * keys often travel in headers such as X-Api-Key).
+ */
+function stripCredentialHeaders(
+  current: Record<string, string>,
+  userHeaders: Record<string, string>
+): Record<string, string> {
+  const userSupplied = new Set(Object.keys(userHeaders).map((h) => h.toLowerCase()));
+  const next: Record<string, string> = {};
+  for (const [name, value] of Object.entries(current)) {
+    const lower = name.toLowerCase();
+    if (CREDENTIAL_HEADERS.has(lower)) continue;
+    if (userSupplied.has(lower) && !SAFE_CROSS_ORIGIN_HEADERS.has(lower)) continue;
+    next[name] = value;
+  }
+  return next;
+}
+
+/** Read a response body as text, aborting as soon as it grows past `maxBytes`. */
+async function readBodyWithLimit(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`Response exceeds maximum size of ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
+/** Validate a caller-supplied proxy, or fall back to the operator's proxy pool. */
+async function selectProxy(proxy?: string): Promise<string | undefined> {
+  if (proxy && proxy.trim()) return validateProxyUrl(proxy);
+  return proxyPool.getProxy();
+}
+
 /**
  * Fetch raw HTML content from a URL using native HTTP fetch with resilience, proxying, & headers/cookies.
  */
@@ -111,11 +161,15 @@ export async function fetchHtml(
       headers: requestHeaders,
     };
 
-    // An explicit --proxy always wins; otherwise pull the next entry from the
-    // LOOKACRAWLER_PROXIES pool so a blocked IP is not fatal for the whole run.
-    const effectiveProxy = proxyPool.getProxy(proxy);
+    // An explicit --proxy always wins (after validation); otherwise pull the
+    // next entry from the operator's LOOKACRAWLER_PROXIES pool. With no proxy
+    // at all, traffic goes through the local egress guard, which pins every
+    // connection to the IP it validated (no DNS rebinding, no redirect tricks).
+    const effectiveProxy = await selectProxy(proxy);
     if (effectiveProxy) {
       fetchOpts.proxy = effectiveProxy;
+    } else if (!isLocalAccessAllowed()) {
+      fetchOpts.proxy = (await getEgressGuard()).url;
     }
     // MITM-intercepting proxies (corporate TLS inspection, some residential
     // providers) present a forged cert. Bun has no per-request TLS knob we can
@@ -129,19 +183,32 @@ export async function fetchHtml(
     let response: Response | undefined;
     for (let redirect = 0; redirect <= 5; redirect++) {
       response = await fetch(currentUrl, { ...fetchOpts, redirect: "manual" });
+      if (response.headers.get(BLOCKED_HEADER)) {
+        throw new Error("Requests to private or local hosts are not allowed");
+      }
       if (response.status < 300 || response.status >= 400) break;
       const location = response.headers.get("location");
       if (!location || redirect === 5) throw new Error(`HTTP ${response.status}: redirect limit exceeded`);
-      currentUrl = new URL(location, currentUrl).toString();
-      await validateTargetUrl(currentUrl);
+      await response.body?.cancel().catch(() => {});
+      const nextUrl = new URL(location, currentUrl).toString();
+      await validateTargetUrl(nextUrl);
+      if (new URL(nextUrl).origin !== new URL(currentUrl).origin) {
+        // Same rule browsers apply: credentials the caller scoped to one site
+        // must not be replayed to whatever host a redirect points at.
+        fetchOpts.headers = stripCredentialHeaders(fetchOpts.headers, headers);
+      }
+      currentUrl = nextUrl;
       await globalRateLimiter.throttle(currentUrl);
     }
     if (!response) throw new Error("Request did not return a response");
     const contentLength = Number(response.headers.get("content-length") || 0);
     if (contentLength > getMaxResponseBytes()) {
+      await response.body?.cancel().catch(() => {});
       throw new Error(`Response exceeds maximum size of ${getMaxResponseBytes()} bytes`);
     }
-    const htmlText = await readBodyCapped(response);
+    // Content-Length is optional (chunked responses) and can lie, so enforce
+    // the cap while streaming instead of buffering the whole body first.
+    const htmlText = await readBodyWithLimit(response, getMaxResponseBytes());
     recordMetric("bytesFetched", Buffer.byteLength(htmlText, "utf8"));
 
     const antiBotCheck: AntiBotCheckResult = detectAntiBot(response.status, htmlText);
@@ -282,7 +349,7 @@ export function processHtmlToMarkdown(
   return processDocumentToMarkdown(dom.window.document, cssSelector, url, linkFormat, imageMode);
 }
 
-/** Below this, a pruned result is treated as "the heuristic ate the page". */
+/** Below this, a pruned result is treated as "the heuristic may have eaten the page". */
 const MIN_USEFUL_MARKDOWN_CHARS = 200;
 
 function processDocumentToMarkdown(
@@ -478,19 +545,70 @@ const ALLOWED_RESOURCE_TYPES = new Set([
 ]);
 
 /**
- * Single request guard for every deep-mode page: blocks heavy resource types
- * and runs the SSRF check on *every* allowed request — not just navigations —
- * so page scripts cannot fetch()/XHR into private networks (e.g. 169.254.169.254).
+ * Install the per-page request handler used by every deep (browser) fetch:
+ *  - aborts resource types we never need (images, CSS, fonts, media);
+ *  - runs the SSRF check on *every* request, not only navigations;
+ *  - injects caller headers (often Authorization / API keys) only into
+ *    requests for the target's own origin. `setExtraHTTPHeaders` would hand
+ *    them to every third-party script, pixel and CDN on the page.
+ *
+ * Redirect hops after a credentialed request are deliberately not given the
+ * headers again (so a same-origin redirect loses them too — safe default).
+ *
+ * Playwright does not call this handler for redirect hops, so a 302 to an
+ * internal address is stopped by the egress guard the browser is routed
+ * through (see egress-guard.ts) and by `assertSafeNavigation`.
  */
-async function guardRoute(route: Route): Promise<void> {
-  const req = route.request();
-  if (!ALLOWED_RESOURCE_TYPES.has(req.resourceType())) return route.abort();
-  try {
-    await validateTargetUrl(req.url());
-  } catch {
-    return route.abort();
+async function installRequestGuard(
+  page: Page,
+  targetUrl: string,
+  headers?: Record<string, string>
+): Promise<void> {
+  const targetOrigin = new URL(targetUrl).origin;
+  const injected = Object.fromEntries(
+    Object.entries(headers || {}).filter(([name]) => name.toLowerCase() !== "user-agent")
+  );
+  const hasInjected = Object.keys(injected).length > 0;
+
+  await page.route("**/*", async (route) => {
+    const req = route.request();
+    if (!ALLOWED_RESOURCE_TYPES.has(req.resourceType())) {
+      return route.abort();
+    }
+    try {
+      await validateTargetUrl(req.url());
+    } catch {
+      return route.abort("blockedbyclient");
+    }
+    if (hasInjected && new URL(req.url()).origin === targetOrigin) {
+      // Headers passed to route.continue() also ride along on every redirect
+      // hop, including one to a different origin. Fetch this request without
+      // following redirects instead and hand the 3xx back to the browser,
+      // which then follows it *without* the caller's credentials. The fetch
+      // runs through the same browser proxy (egress guard) as everything else.
+      try {
+        const response = await route.fetch({ headers: { ...req.headers(), ...injected }, maxRedirects: 0 });
+        return route.fulfill({ response });
+      } catch {
+        return route.abort("failed");
+      }
+    }
+    return route.continue();
+  });
+}
+
+/**
+ * Defence in depth for setups that bypass the egress guard (explicit proxy):
+ * refuse content whose redirect chain or final URL is a forbidden host.
+ */
+async function assertSafeNavigation(page: Page, response: PlaywrightResponse | null): Promise<void> {
+  if (response && (await response.headerValue(BLOCKED_HEADER).catch(() => null))) {
+    throw new Error("Requests to private or local hosts are not allowed");
   }
-  return route.continue();
+  for (let r = response?.request() ?? null; r; r = r.redirectedFrom()) {
+    await validateTargetUrl(r.url());
+  }
+  await validateTargetUrl(page.url());
 }
 
 /**
@@ -548,10 +666,6 @@ async function extractDeepOnce(options: DeepExtractOptions): Promise<string> {
           // Install stealth script to spoof fingerprint before any page script executes
           await context.addInitScript(getStealthInit());
 
-          if (headers) {
-            await context.setExtraHTTPHeaders(headers);
-          }
-
           if (cookies && Object.keys(cookies).length > 0) {
             const parsedUrl = new URL(url);
             const playwrightCookies = Object.entries(cookies).map(([name, value]) => ({
@@ -565,13 +679,13 @@ async function extractDeepOnce(options: DeepExtractOptions): Promise<string> {
 
           const page = await context.newPage();
 
-          // Crucial Optimization: Request Interception & SSRF Navigation Protection
-          await page.route("**/*", guardRoute);
+          await installRequestGuard(page, url, headers);
 
           const response = await page.goto(url, {
             waitUntil: "domcontentloaded",
             timeout: timeoutMs,
           });
+          await assertSafeNavigation(page, response);
 
           if (cssSelector) {
             await page.locator(cssSelector).first().waitFor({ state: "attached", timeout: Math.min(timeoutMs, 3000) }).catch(() => {});
@@ -816,7 +930,6 @@ export async function fetchRawHtml(
           // Stealth: patch the JS fingerprint before any page script runs, so
           // Cloudflare sees a "human-like" surface instead of a headless one.
           await context.addInitScript(getStealthInit());
-          if (headers) await context.setExtraHTTPHeaders(headers);
           if (cookies && Object.keys(cookies).length > 0) {
             const parsedUrl = new URL(url);
             const playwrightCookies = Object.entries(cookies).map(([name, value]) => ({
@@ -828,12 +941,14 @@ export async function fetchRawHtml(
             await context.addCookies(playwrightCookies);
           }
           const page = await context.newPage();
-          await page.route("**/*", guardRoute);
+          await installRequestGuard(page, url, headers);
           const response = await page.goto(url, {
             waitUntil: "domcontentloaded",
             timeout: timeoutMs,
           });
+          await assertSafeNavigation(page, response);
           await page.waitForLoadState("networkidle", { timeout: Math.min(timeoutMs, 3000) }).catch(() => {});
+          await validateTargetUrl(page.url());
           const renderedHtml = await page.content();
           const status = response ? response.status() : 200;
           const antiBotCheck = detectAntiBot(status, renderedHtml);

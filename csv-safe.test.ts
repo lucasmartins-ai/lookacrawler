@@ -19,6 +19,14 @@ describe("CSV Safety & Formula Injection Prevention (csv-safe.ts)", () => {
     expect(sanitizeCsvCell("")).toBe("");
   });
 
+  test("should keep numeric cells as numbers, including negative coordinates", () => {
+    expect(sanitizeCsvCell(-16.6869)).toBe("-16.6869");
+    expect(sanitizeCsvCell(-49.2648)).toBe("-49.2648");
+
+    const csvOutput = toSafeCsv(["Title", "Latitude", "Longitude"], [["Clínica", -16.6869, -49.2648]]);
+    expect(csvOutput).toBe("Title,Latitude,Longitude\r\nClínica,-16.6869,-49.2648");
+  });
+
   test("should correctly sanitize an entire row array", () => {
     const rawRow = ["=SUM(A1)", "Normal Text", "@danger"];
     const sanitized = sanitizeCsvRow(rawRow);

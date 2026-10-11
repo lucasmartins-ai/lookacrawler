@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
 
 export interface GoogleMapsLead {
   input_id?: string;
@@ -80,11 +79,12 @@ export function resolveMapsLeadsBinary(customPath?: string): string | null {
 
   // ponytail: no install step for a sibling binary. Add a `npx`-style fetch when
   // the scraper ships as a real npm package; until then MAPS_LEADS_BIN wins.
+  const binaryName = process.platform === "win32" ? "maps-leads.exe" : "maps-leads";
   const candidates = [
-    path.resolve(__dirname, "../google-maps-scraper/maps-leads"),
-    path.resolve(__dirname, "../../google-maps-scraper/maps-leads"),
-    path.resolve(process.cwd(), "google-maps-scraper/maps-leads"),
-    path.resolve(process.cwd(), "../google-maps-scraper/maps-leads"),
+    path.resolve(__dirname, "../google-maps-scraper", binaryName),
+    path.resolve(__dirname, "../../google-maps-scraper", binaryName),
+    path.resolve(process.cwd(), "google-maps-scraper", binaryName),
+    path.resolve(process.cwd(), "../google-maps-scraper", binaryName),
   ];
 
   for (const candidate of candidates) {
@@ -112,19 +112,11 @@ export function formatWhatsAppLink(phone?: string, address?: string, country?: s
 
   const loc = `${address || ""} ${country || ""}`.toLowerCase();
 
+  // Whole-word matches only: a substring test for "us" or "uk" also hits
+  // Brazilian addresses such as "Rua Augusta" or "Setor Industrial".
   // Case 2: UK numbers
   const isUK =
-    loc.includes("uk") ||
-    loc.includes("united kingdom") ||
-    loc.includes("bristol") ||
-    loc.includes("london") ||
-    loc.includes("manchester") ||
-    loc.includes("liverpool") ||
-    loc.includes("birmingham") ||
-    loc.includes("leeds") ||
-    loc.includes("sheffield") ||
-    loc.includes("cardiff") ||
-    loc.includes("southampton");
+    /\b(uk|united kingdom|bristol|london|manchester|liverpool|birmingham|leeds|sheffield|cardiff|southampton)\b/.test(loc);
 
   if (isUK) {
     if (digits.startsWith("44") && digits.length >= 11) {
@@ -137,7 +129,7 @@ export function formatWhatsAppLink(phone?: string, address?: string, country?: s
   }
 
   // Case 3: US / Canada (10 digits or 1 + 10 digits)
-  const isUS = loc.includes("usa") || loc.includes("united states") || loc.includes("us");
+  const isUS = /\b(us|usa|united states)\b/.test(loc);
   if (isUS) {
     if (digits.startsWith("1") && digits.length === 11) {
       return `https://wa.me/${digits}`;
@@ -315,10 +307,15 @@ export async function discoverLocalLeadsViaDaemon(
     },
   };
 
+  // A daemon that accepts the connection but never answers would otherwise
+  // hang the call: the poll deadline is only checked between iterations.
+  const requestTimeout = () => AbortSignal.timeout(5000);
+
   const createRes = await fetch(`${baseUrl}/api/v1/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(jobPayload),
+    signal: requestTimeout(),
   });
 
   if (!createRes.ok) {
@@ -339,7 +336,7 @@ export async function discoverLocalLeadsViaDaemon(
   while (Date.now() < pollDeadline) {
     await new Promise((r) => setTimeout(r, 400));
     try {
-      const pollRes = await fetch(`${baseUrl}/api/v1/jobs/${jobId}`);
+      const pollRes = await fetch(`${baseUrl}/api/v1/jobs/${jobId}`, { signal: requestTimeout() });
       if (pollRes.ok) {
         const pollData: any = await pollRes.json();
         finalStatus = pollData.status;
@@ -356,7 +353,9 @@ export async function discoverLocalLeadsViaDaemon(
         // Fast streaming return: if enough records are already written, finalize immediately
         if (Date.now() > startTime + 2500) {
           try {
-            const peekRes = await fetch(`${baseUrl}/api/v1/jobs/${jobId}/results?limit=${limit}`);
+            const peekRes = await fetch(`${baseUrl}/api/v1/jobs/${jobId}/results?limit=${limit}`, {
+              signal: requestTimeout(),
+            });
             if (peekRes.ok) {
               const peekJson: any = await peekRes.json();
               if (Array.isArray(peekJson.rows) && peekJson.rows.length >= limit) {
@@ -371,11 +370,21 @@ export async function discoverLocalLeadsViaDaemon(
     } catch {}
   }
 
+  // Deadline reached with the job still running: stop it instead of letting it
+  // keep scraping in the background.
+  if (Date.now() >= pollDeadline) {
+    fetch(`${baseUrl}/api/v1/jobs/${jobId}/cancel`, { method: "POST", signal: requestTimeout() }).catch(() => {});
+  }
+
   // Fetch results (retry once if needed)
-  let resultsRes = await fetch(`${baseUrl}/api/v1/jobs/${jobId}/results?limit=${limit}`);
+  let resultsRes = await fetch(`${baseUrl}/api/v1/jobs/${jobId}/results?limit=${limit}`, {
+    signal: requestTimeout(),
+  });
   if (!resultsRes.ok) {
     await new Promise((r) => setTimeout(r, 600));
-    resultsRes = await fetch(`${baseUrl}/api/v1/jobs/${jobId}/results?limit=${limit}`);
+    resultsRes = await fetch(`${baseUrl}/api/v1/jobs/${jobId}/results?limit=${limit}`, {
+      signal: requestTimeout(),
+    });
   }
   if (!resultsRes.ok) {
     const errText = await resultsRes.text().catch(() => "");
@@ -482,15 +491,9 @@ export async function discoverLocalLeadsViaCli(
     args.push("-radius", String(options.radius));
   }
 
-  const homeDir = os.homedir();
-  const env = {
-    ...process.env,
-    PLAYWRIGHT_BROWSERS_PATH:
-      process.env.PLAYWRIGHT_BROWSERS_PATH ||
-      path.join(homeDir, "Library/Caches/ms-playwright"),
-    PLAYWRIGHT_NODEJS_PATH:
-      process.env.PLAYWRIGHT_NODEJS_PATH || "/Users/Master/.local/bin/node",
-  };
+  // PLAYWRIGHT_BROWSERS_PATH / PLAYWRIGHT_NODEJS_PATH are inherited when set;
+  // otherwise the driver falls back to its own per-OS defaults.
+  const env = { ...process.env };
 
   return new Promise((resolve) => {
     let child: any;
@@ -556,6 +559,8 @@ export async function discoverLocalLeadsViaCli(
     };
 
     const processLine = (trimmed: string) => {
+      // `finish` hands `leads` to the caller; keep it at `limit` afterwards.
+      if (isResolved) return;
       if (!trimmed || !trimmed.startsWith("{")) return;
       try {
         const parsed = JSON.parse(trimmed);
@@ -616,8 +621,13 @@ export async function discoverLocalLeadsViaCli(
       } catch {}
     };
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      lineBuffer += chunk.toString("utf8");
+    // Decode as a stream so a multi-byte character split across two chunks
+    // is reassembled instead of turning into U+FFFD ("São" -> "S��o").
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+
+    child.stdout.on("data", (chunk: string) => {
+      lineBuffer += chunk;
       const lines = lineBuffer.split("\n");
       lineBuffer = lines.pop() || "";
       for (const line of lines) {
@@ -625,8 +635,8 @@ export async function discoverLocalLeadsViaCli(
       }
     });
 
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderrBuffer += chunk.toString("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderrBuffer += chunk;
     });
 
     child.on("error", (err: Error) => {

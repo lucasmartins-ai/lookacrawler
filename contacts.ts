@@ -30,8 +30,10 @@ export interface ExtractContactsOptions {
   proxy?: string;
 }
 
-// RFC 5322-compliant extraction pattern
-const EMAIL_REGEX = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
+// Bounded local part and domain labels keep the scan linear: an unbounded
+// `[...]+@` restarts at every position of a long token with no "@"
+// (inline JSON, base64, hashes) and takes seconds on ~100 KB of text.
+const EMAIL_REGEX = /(?<![\w.%+-])[\w.%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}\b/g;
 
 // Known dummy / placeholder email prefixes & domains
 const IGNORED_EMAIL_PATTERNS = [
@@ -51,7 +53,7 @@ const IGNORED_EMAIL_PATTERNS = [
 
 // File extensions mistakenly captured as email domain ends
 const INVALID_EMAIL_EXTENSIONS = new Set([
-  "png", "jpg", "jpeg", "webp", "gif", "svg", "css", "js", "woff", "woff2", "ttf", "ico"
+  "png", "jpg", "jpeg", "webp", "avif", "gif", "bmp", "svg", "css", "js", "woff", "woff2", "ttf", "ico"
 ]);
 
 const PHONE_REGEX = /(?:\+?(\d{1,3}))?[-.\s]?(?:\(?(\d{2,3})\)?)?[-.\s]?(\d{4,5})[-.\s]?(\d{4})\b/g;
@@ -156,7 +158,7 @@ function parseContactsFromHtml(
   // 1. Extract mailto: links
   for (const a of Array.from(doc.querySelectorAll('a[href^="mailto:"]'))) {
     const raw = a.getAttribute("href") || "";
-    const mail = raw.replace(/^mailto:/i, "").split("?")[0].trim().toLowerCase();
+    const mail = safeDecode(raw.replace(/^mailto:/i, "").split("?")[0]).trim().toLowerCase();
     if (isValidEmail(mail)) {
       emails.add(mail);
     }
@@ -190,7 +192,7 @@ function parseContactsFromHtml(
   }
 
   // 4. Text regex scan for emails and phone numbers
-  const bodyText = doc.body ? doc.body.textContent || "" : "";
+  const bodyText = visibleText(doc);
 
   // Scan emails in text
   const emailMatches = bodyText.match(EMAIL_REGEX) || [];
@@ -213,6 +215,33 @@ function parseContactsFromHtml(
         phones.add(cleaned);
       }
     }
+  }
+}
+
+/**
+ * Text of the document body without script/style content, with a space between
+ * text nodes. `textContent` glues adjacent elements together, so
+ * `<span>(62) 99999-9999</span><span>contato@x.com</span>` would read as a
+ * single "email" starting with the phone digits.
+ */
+function visibleText(doc: Document): string {
+  if (!doc.body) return "";
+  for (const el of Array.from(doc.body.querySelectorAll("script, style, noscript, template"))) {
+    el.remove();
+  }
+  const walker = doc.createTreeWalker(doc.body, 4 /* NodeFilter.SHOW_TEXT */);
+  const parts: string[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.nodeValue) parts.push(node.nodeValue);
+  }
+  return parts.join(" ");
+}
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
   }
 }
 
@@ -262,31 +291,40 @@ function extractWhatsAppNumber(urlStr: string): string | null {
  */
 function detectSocialLink(href: string, socials: SocialProfiles): void {
   try {
+    // Match on the hostname: a substring test for "x.com/" also hits
+    // dropbox.com, fedex.com, box.com, ...
+    let host: string;
+    try {
+      host = new URL(href).hostname.toLowerCase();
+    } catch {
+      return;
+    }
+    const isHost = (domain: string) => host === domain || host.endsWith(`.${domain}`);
     const lower = href.toLowerCase();
 
-    if (lower.includes("instagram.com/") && !socials.instagram) {
+    if (isHost("instagram.com") && !socials.instagram) {
       if (!lower.includes("/p/") && !lower.includes("/stories/") && !lower.includes("/explore/")) {
         socials.instagram = cleanUrl(href);
       }
-    } else if (lower.includes("linkedin.com/") && !socials.linkedin) {
+    } else if (isHost("linkedin.com") && !socials.linkedin) {
       if (lower.includes("/company/") || lower.includes("/in/")) {
         socials.linkedin = cleanUrl(href);
       }
-    } else if (lower.includes("facebook.com/") && !socials.facebook) {
+    } else if (isHost("facebook.com") && !socials.facebook) {
       if (!lower.includes("/sharer") && !lower.includes("/share.php")) {
         socials.facebook = cleanUrl(href);
       }
-    } else if ((lower.includes("twitter.com/") || lower.includes("x.com/")) && !socials.twitter) {
+    } else if ((isHost("twitter.com") || isHost("x.com")) && !socials.twitter) {
       if (!lower.includes("/intent/") && !lower.includes("/share")) {
         socials.twitter = cleanUrl(href);
       }
-    } else if (lower.includes("youtube.com/") && !socials.youtube) {
+    } else if (isHost("youtube.com") && !socials.youtube) {
       if (lower.includes("/@") || lower.includes("/channel/") || lower.includes("/c/")) {
         socials.youtube = cleanUrl(href);
       }
-    } else if (lower.includes("github.com/") && !socials.github) {
+    } else if (isHost("github.com") && !socials.github) {
       socials.github = cleanUrl(href);
-    } else if (lower.includes("tiktok.com/@") && !socials.tiktok) {
+    } else if (isHost("tiktok.com") && lower.includes("/@") && !socials.tiktok) {
       socials.tiktok = cleanUrl(href);
     }
   } catch {

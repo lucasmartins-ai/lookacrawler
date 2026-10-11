@@ -47,6 +47,26 @@ describe("WhatsApp link formatting", () => {
     expect(formatWhatsAppLink("(021) 3333-4444")).toBeUndefined();
   });
 
+  test("does not mistake Brazilian street names for US/UK locations", () => {
+    expect(formatWhatsAppLink("(11) 98765-4321", "Rua Augusta, 1500 - Consolação, São Paulo - SP")).toBe(
+      "https://wa.me/5511987654321"
+    );
+    expect(formatWhatsAppLink("(62) 3333-4444", "Av. Industrial, 200 - Setor Industrial, Goiânia - GO")).toBe(
+      "https://wa.me/556233334444"
+    );
+    expect(formatWhatsAppLink("(31) 99876-5432", "Rua Jesus de Nazaré, 10 - Belo Horizonte")).toBe(
+      "https://wa.me/5531998765432"
+    );
+  });
+
+  test("still detects real US and UK locations", () => {
+    expect(formatWhatsAppLink("(415) 555-0100", "1 Market St, San Francisco, CA 94105, USA")).toBe(
+      "https://wa.me/14155550100"
+    );
+    expect(formatWhatsAppLink("(212) 555-0100", "350 5th Ave, New York, NY, US")).toBe("https://wa.me/12125550100");
+    expect(formatWhatsAppLink("020 7946 0958", "221B Baker St, London NW1 6XE, UK")).toBe("https://wa.me/442079460958");
+  });
+
   test("rejects unusable input instead of emitting a broken link", () => {
     expect(formatWhatsAppLink(undefined)).toBeUndefined();
     expect(formatWhatsAppLink("123")).toBeUndefined();

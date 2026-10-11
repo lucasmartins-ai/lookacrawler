@@ -7,41 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Security hardening and test hermeticity from the October 2026 audit.
-
-### Security
-
-- **SSE transport no longer trusts the browser.** CORS `*` is gone; browser
-  requests need their origin in `LOOKACRAWLER_CORS_ORIGIN`. On a loopback bind
-  the `Host` header must be loopback (DNS-rebinding guard). Binding to a
-  non-loopback address without `LOOKACRAWLER_SSE_TOKEN` now refuses to start,
-  and the token is compared in constant time. **Breaking for Docker:** pass
-  `-e LOOKACRAWLER_SSE_TOKEN=...`.
-- **Deep mode SSRF via subresources.** Only navigations were validated, so page
-  scripts could `fetch()` private addresses (e.g. cloud metadata). Every allowed
-  request now goes through `validateTargetUrl`; the two duplicated route
-  handlers are one `guardRoute`.
-- **Response size cap enforced while streaming.** Bodies without
-  `Content-Length` were buffered whole before the check.
-
 ### Fixed
-
-- Tests are hermetic: an in-memory cache DB and stubbed DNS via `bunfig.toml`
-  preload. Previously the suite wiped the real `crawler_cache.sqlite` and
-  failed offline (11 failures).
-- Expired cache entries are pruned on server start; the cache grew unbounded.
+- SSE server leaked sessions: Bun's `node:http` never emits `close` on the
+  response when a client disconnects, so slots were never freed and the server
+  answered `503` to everyone once `LOOKACRAWLER_SSE_MAX_SESSIONS` clients had
+  come and gone. Sessions are now released on the request's `close` too.
 - Link-heavy pages (news homepages) returned empty Markdown: link-density
-  pruning removed the whole content container. When pruning strips >75% of the
-  output, the page is re-rendered without it.
-- CLI hung after `--mode deep`: Chromium was never closed. Non-`serve`
-  commands now call `closeBrowsers()` on exit.
-- Version strings synced to 1.1.1; Maps/enrichment error messages in English.
+  pruning removed the whole content container (`bbc.com/news`: 0 chars). When
+  pruning strips >75% of the output, the page is re-rendered without it.
+- Tests are hermetic: a `bunfig.toml` preload gives them an in-memory cache DB
+  and stubbed DNS. Previously the suite wiped the real `crawler_cache.sqlite`
+  and failed offline; the CLI flag-order test now uses a local fixture.
+- Maps/enrichment error messages are in English like the rest of the product.
 
 ### Changed
+- CI pins Bun 1.3.14 instead of `latest`.
+- Token-savings claim re-measured on 8 real pages (`benchmark-live.ts`):
+  median 90%, range 21–98%, replacing the synthetic ">73%".
 
-- CI pins Bun 1.3.14, uses `--frozen-lockfile` and runs `tsc --noEmit`.
-- Token-savings claim re-measured on real pages (`benchmark-live.ts`): median
-  90%, range 21–98% over 8 sites, replacing the synthetic ">73%".
+## [1.1.2] — 2026-10-11
+
+Security patch release. Upgrading is recommended for anyone running the SSE
+server or using `deep` mode. See the README "SSE server security" section for
+the new defaults (token required off-loopback, CORS allowlist).
+
+### Security
+- `deep` mode: every outbound connection (redirect hops, page-initiated
+  fetch/XHR/WebSocket included) now goes through a loopback egress guard that
+  pins the validated IP, closing redirect-based SSRF and DNS rebinding. The
+  final URL and redirect chain are re-validated as well.
+- `fast` mode: connections are pinned the same way; the response size cap is
+  enforced while streaming, so responses without `Content-Length` can no longer
+  exhaust memory.
+- Caller `Cookie`, `Authorization` and custom headers are no longer sent after a
+  cross-origin redirect, and in `deep` mode headers are only sent to the target
+  origin (previously to every third-party request).
+- Per-request `proxy` values are validated (scheme, no path, no
+  private/local host); trusted local proxies can be listed in
+  `LOOKACRAWLER_ALLOWED_PROXIES`.
+- Concurrent Chromium processes are capped (`LOOKACRAWLER_MAX_BROWSERS`) and idle
+  ones are closed.
+- SSE server: a token is mandatory on non-loopback binds (generated if unset),
+  CORS is limited to `LOOKACRAWLER_SSE_ALLOWED_ORIGINS` instead of `*`, browser
+  requests from other origins and non-loopback `Host` headers are refused, and
+  the token check is constant-time.
+- `isPrivateAddress` recognises IPv4-mapped (`::ffff:7f00:1`), NAT64 and 6to4
+  encodings of internal addresses.
+
+### Added
+- SSE server: several MCP clients can be connected at the same time; each
+  session gets its own server instance. Open sessions are capped by
+  `LOOKACRAWLER_SSE_MAX_SESSIONS` (default 16); beyond that `/sse` answers `503`.
+
+### Fixed
+- SSE server: a new client can connect after the previous one disconnects
+  (previously every later connection got `409` until restart).
+- CLI: `extract`/`batch`/`crawl` with `--mode deep` now exit when they finish
+  (Chromium and the egress guard were keeping the process alive).
+- The MCP server reported version `1.1.0`; versions are now aligned to `1.1.2`.
 
 ## [1.1.1] — 2026-10-02
 

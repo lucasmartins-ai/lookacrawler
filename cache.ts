@@ -19,6 +19,7 @@ db.run(`
     timestamp INTEGER
   )
 `);
+db.run("CREATE INDEX IF NOT EXISTS idx_pages_timestamp ON pages (timestamp)");
 
 /**
  * Cache TTL: 24 hours in milliseconds
@@ -83,7 +84,8 @@ const deleteQuery = db.query("DELETE FROM pages WHERE url = ?");
 const upsertQuery = db.query(
   "INSERT OR REPLACE INTO pages (url, content, timestamp) VALUES (?, ?, ?)"
 );
-const pruneQuery = db.query("DELETE FROM pages WHERE ? - timestamp > ?");
+// `timestamp < cutoff` can use idx_pages_timestamp; `? - timestamp > ?` cannot.
+const pruneQuery = db.query("DELETE FROM pages WHERE timestamp < ?");
 
 /**
  * Retrieve cached page content if present and within TTL
@@ -120,7 +122,7 @@ export function clearCache(): void {
 }
 
 export function pruneExpiredCache(): number {
-  const res = pruneQuery.run(Date.now(), TTL_MS);
+  const res = pruneQuery.run(Date.now() - TTL_MS);
   return (res as any)?.changes || 0;
 }
 

@@ -50,6 +50,23 @@ describe("Contact & Social Extraction Module (contacts.ts)", () => {
           );
         }
 
+        if (url.pathname === "/edge-cases") {
+          return new Response(
+            `<!DOCTYPE html>
+            <html>
+              <body>
+                <p><span>(62) 99999-9999</span><span>vendas@lookadev.com</span></p>
+                <a href="mailto:%20financeiro@lookadev.com">Financeiro</a>
+                <p>${"a1b2-c3d4.".repeat(10000)}</p>
+                <a href="https://www.dropbox.com/s/abc/catalogo.pdf">Catálogo</a>
+                <a href="https://x.com/lookadev">X</a>
+                <script>window.__CONFIG__ = { tracking: "pixel@tracker-cdn.io" };</script>
+              </body>
+            </html>`,
+            { headers: { "Content-Type": "text/html; charset=utf-8" } }
+          );
+        }
+
         return new Response("Not Found", { status: 404 });
       },
     });
@@ -92,6 +109,33 @@ describe("Contact & Social Extraction Module (contacts.ts)", () => {
 
     expect(result.socials.instagram).toBe("https://instagram.com/lookadev");
     expect(result.socials.linkedin).toBe("https://linkedin.com/company/lookadev");
+  });
+
+  test("should not merge text from adjacent elements into one email", async () => {
+    const result = await extractContacts({ url: `${serverUrl}/edge-cases`, deepScan: false });
+
+    expect(result.emails).toContain("vendas@lookadev.com");
+    expect(result.emails.some((e) => e.includes("9999vendas"))).toBe(false);
+  });
+
+  test("should decode mailto links and skip emails inside scripts", async () => {
+    const result = await extractContacts({ url: `${serverUrl}/edge-cases`, deepScan: false });
+
+    expect(result.emails).toContain("financeiro@lookadev.com");
+    expect(result.emails).not.toContain("pixel@tracker-cdn.io");
+  });
+
+  test("should scan long tokens without an @ in linear time", async () => {
+    const started = performance.now();
+    await extractContacts({ url: `${serverUrl}/edge-cases`, deepScan: false });
+
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  test("should match social networks by hostname, not substring", async () => {
+    const result = await extractContacts({ url: `${serverUrl}/edge-cases`, deepScan: false });
+
+    expect(result.socials.twitter).toBe("https://x.com/lookadev");
   });
 
   test("should perform deep scan visiting dedicated contact subpages", async () => {

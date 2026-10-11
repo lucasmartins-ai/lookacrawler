@@ -35,7 +35,8 @@ export interface EnrichedLeadResult {
   error?: string;
 }
 
-const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+// Bounded and anchored so long tokens without "@" are not rescanned at every offset.
+const EMAIL_REGEX = /(?<![\w.%+-])[\w.%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}\b/g;
 const INTL_PHONE_REGEX = /(?:\+?[0-9]{1,4}[\s.-]?)?(?:\([0-9]{2,4}\)[\s.-]?)?[0-9]{3,5}[\s.-]?[0-9]{3,4}/g;
 
 /**
@@ -52,7 +53,7 @@ function cleanEmails(rawEmails: string[]): string[] {
     "wordpress.org",
     "gravatar.com",
   ];
-  const ignoredExts = [".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif", ".pdf"];
+  const ignoredExts = [".png", ".jpg", ".jpeg", ".svg", ".webp", ".avif", ".gif", ".pdf"];
 
   const set = new Set<string>();
   for (const e of rawEmails) {
