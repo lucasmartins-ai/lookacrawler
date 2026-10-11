@@ -36,6 +36,7 @@ export const BLOCKED_HEADER = "x-lookacrawler-blocked";
 
 let guardPromise: Promise<EgressGuard> | null = null;
 let guardServer: Server | null = null;
+const guardSockets = new Set<net.Socket>();
 
 function isAuthorized(req: IncomingMessage, expected: Buffer): boolean {
   const header = req.headers["proxy-authorization"];
@@ -174,7 +175,11 @@ function startGuard(): Promise<EgressGuard> {
   // The guard must never keep the process alive on its own: the in-process
   // client (fetch / the awaited browser call) already does while a request is
   // in flight, and a short-lived CLI run has to exit as soon as it is done.
-  server.on("connection", (sock: net.Socket) => sock.unref());
+  server.on("connection", (sock: net.Socket) => {
+    sock.unref();
+    guardSockets.add(sock);
+    sock.once("close", () => guardSockets.delete(sock));
+  });
 
   return new Promise<EgressGuard>((resolve, reject) => {
     server.once("error", reject);
@@ -212,7 +217,14 @@ export async function stopEgressGuard(): Promise<void> {
   const server = guardServer;
   guardServer = null;
   guardPromise = null;
-  if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (!server) return;
+  // server.close() only resolves once every connection has ended, and clients
+  // keep idle keep-alive (and CONNECT tunnel) sockets open. Destroy them so
+  // shutdown never waits on a socket nobody is using any more.
+  const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+  for (const sock of guardSockets) sock.destroy();
+  guardSockets.clear();
+  await closed;
 }
 
 registerCleanup(stopEgressGuard);

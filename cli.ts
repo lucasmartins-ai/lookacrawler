@@ -578,7 +578,7 @@ async function main() {
   // One-shot commands: close Chromium and the egress guard, otherwise their
   // handles keep the event loop alive and the process never exits.
   const { runCleanups } = await import("./lifecycle.js");
-  await runCleanups();
+  await runCleanups(3_000);
   // Safety net for any other stray handle; unref'd so it never delays a
   // process that is already free to exit.
   setTimeout(() => process.exit(process.exitCode ?? 0), 2_000).unref();
