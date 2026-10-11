@@ -163,6 +163,7 @@ bun run cli.ts serve --transport sse --port 3000
 | `LOOKACRAWLER_SSE_TOKEN` | Bearer token required on every request. If the server is bound to a non-loopback address (e.g. `--host 0.0.0.0`) and this is unset, a random token is generated and printed at startup. |
 | `LOOKACRAWLER_SSE_ALLOWED_ORIGINS` | Comma-separated web origins allowed to call the server from a browser (CORS). Requests with any other `Origin` header are refused. CLI/desktop MCP clients are unaffected. |
 | `LOOKACRAWLER_SSE_ALLOW_UNAUTHENTICATED` | `true` disables the token requirement on non-loopback binds. Only for isolated networks. |
+| `LOOKACRAWLER_SSE_MAX_SESSIONS` | Maximum concurrent SSE clients (each gets its own MCP session). Default `16`; further connections get `503` until one disconnects. |
 | `LOOKACRAWLER_MAX_BROWSERS` | Maximum concurrent Chromium processes (one per distinct proxy). Default `4`; idle ones are closed after `LOOKACRAWLER_BROWSER_IDLE_MS` (default 120000). |
 
 Outbound connections without a proxy go through a built-in loopback egress

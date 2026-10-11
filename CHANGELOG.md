@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-10-11
+
+Security patch release. Upgrading is recommended for anyone running the SSE
+server or using `deep` mode. See the README "SSE server security" section for
+the new defaults (token required off-loopback, CORS allowlist).
+
 ### Security
 - `deep` mode: every outbound connection (redirect hops, page-initiated
   fetch/XHR/WebSocket included) now goes through a loopback egress guard that
@@ -30,9 +36,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `isPrivateAddress` recognises IPv4-mapped (`::ffff:7f00:1`), NAT64 and 6to4
   encodings of internal addresses.
 
+### Added
+- SSE server: several MCP clients can be connected at the same time; each
+  session gets its own server instance. Open sessions are capped by
+  `LOOKACRAWLER_SSE_MAX_SESSIONS` (default 16); beyond that `/sse` answers `503`.
+
 ### Fixed
 - SSE server: a new client can connect after the previous one disconnects
   (previously every later connection got `409` until restart).
+- CLI: `extract`/`batch`/`crawl` with `--mode deep` now exit when they finish
+  (Chromium and the egress guard were keeping the process alive).
+- The MCP server reported version `1.1.0`; versions are now aligned to `1.1.2`.
 
 ## [1.1.1] — 2026-10-02
 
