@@ -13,9 +13,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebinding could reach internal hosts through the proxy — including this
   machine's loopback via a trusted local proxy. The guard is now chained in
   front of the proxy (HTTP CONNECT, SOCKS5, SOCKS4) and asks it for the
-  validated IP only. DNS is now resolved locally rather than at the proxy.
+  validated IP only. DNS is now resolved locally rather than at the proxy:
+  geo-DNS follows this machine, Tor `.onion` names no longer resolve, and
+  `LOOKACRAWLER_INSECURE_TLS` does not apply to the TLS hop to an `https://`
+  proxy (a proxy with a forged certificate now fails with 502).
+- Crawl `include`/`exclude` patterns could freeze the whole server: crawled
+  URLs are attacker-controlled and a backtracking regex took ~2.8 s per URL on
+  the event loop (3 hostile URLs stalled every other client for 9.4 s). They
+  are now substrings with `*` wildcards (max 10 × 200 chars); regex syntax is
+  rejected with an error instead of silently matching nothing. (#15)
+- Deep-mode `actions` are bounded (wait ≤ 10 s, scroll ≤ 20000 px, ≤ 20
+  actions, 30 s total, explicit click/fill timeouts). Five clicks on a missing
+  selector used to hold a browser for 166 s. (#15)
+- Authenticated proxies (`user:pass@`) work in deep mode and the password no
+  longer appears on the Chromium command line; service workers are blocked. (#15)
+- Documentation, Teredo, local-use NAT64 and IPv4-translated ranges count as
+  internal addresses. (#15)
 
 ### Fixed
+- Enrichment never hit its cache: the home page was stored with a 7-day TTL in
+  the timestamp column (i.e. year 1970). It is also fetched once per lead
+  instead of twice. (#15)
+- Pages served as ISO-8859-1/windows-1252 lost their accents ("A��o"); the
+  Content-Type charset, `<meta>` charset and BOM are now honoured. (#15)
+- Contacts: phones are normalised to E.164 and validated (libphonenumber), so
+  CPFs, CEPs, dates, prices, timestamps and labelled ids ("Protocolo …") are no
+  longer reported as phones; emails go through one shared filter (placeholders,
+  asset names, error-tracker ids dropped; `[at]`/`(arroba)` decoded); CNPJs
+  (numeric and the new alphanumeric format) are extracted; contact subpages are
+  ranked by whole words ("team" no longer matches "steam"). (#15)
+- `extractContacts` on large pages: the #15 rewrite doubled its time (jsdom
+  `closest()` per text node, four case-insensitive attribute queries); now one
+  anchor pass and a manual text walk (~+20% vs before #15, which did less work).
 - SSE server leaked sessions: Bun's `node:http` never emits `close` on the
   response when a client disconnects, so slots were never freed and the server
   answered `503` to everyone once `LOOKACRAWLER_SSE_MAX_SESSIONS` clients had
@@ -28,7 +57,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and failed offline; the CLI flag-order test now uses a local fixture.
 - Maps/enrichment error messages are in English like the rest of the product.
 
+### Added
+- `places --excel`: CSV with BOM, `;` separator and decimal comma for Excel
+  pt-BR. (#15)
+- `quality/phone.ts`, `quality/email.ts`, `quality/cnpj.ts`. (#15)
+
 ### Changed
+- **Breaking:** crawl/map `include_patterns`/`exclude_patterns` and CLI
+  `--include`/`--exclude` are substrings with `*` wildcards, not regexes. (#15)
+- `contacts.phones` are formatted national numbers, deduplicated; 8-digit
+  local numbers without an area code are dropped. (#15)
+- `enrich` returns `whatsapp` as a `wa.me` URL when Maps has no link. (#15)
+- New dependency: `libphonenumber-js`. (#15)
 - CI pins Bun 1.3.14 instead of `latest`.
 - Token-savings claim re-measured on 8 real pages (`benchmark-live.ts`):
   median 90%, range 21–98%, replacing the synthetic ">73%".
