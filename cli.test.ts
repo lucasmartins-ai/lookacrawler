@@ -42,4 +42,38 @@ describe("LookaCrawler CLI Suite", () => {
     }
     // Spawns the CLI (~1-3 s cold start); the default 5 s fails on a loaded machine.
   }, 15_000);
+
+  test("lookacrawler contacts with several URLs returns an ordered array and keeps going past a failure", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) => {
+        const p = new URL(req.url).pathname;
+        if (p === "/a") return new Response('<html><body><a href="mailto:vendas@loja-a.com.br">x</a></body></html>', { headers: { "content-type": "text/html" } });
+        if (p === "/b") return new Response('<html><body><a href="https://wa.me/5521988887777">zap</a></body></html>', { headers: { "content-type": "text/html" } });
+        return new Response("nope", { status: 500 });
+      },
+    });
+    const base = `http://127.0.0.1:${server.port}`;
+    const run = async (...urls: string[]) => {
+      const proc = Bun.spawn(["bun", "run", "cli.ts", "contacts", "--no-deep", "--concurrency", "2", ...urls], {
+        cwd: import.meta.dir, env: { ...process.env, LOOKACRAWLER_ALLOW_LOCAL: "true" }, stdout: "pipe", stderr: "pipe",
+      });
+      const out = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      return JSON.parse(out.slice(out.indexOf(out.trimStart()[0])));
+    };
+    try {
+      const many = await run(`${base}/a`, `${base}/broken`, `${base}/b`);
+      expect(Array.isArray(many)).toBe(true);
+      expect(many.map((r: any) => r.url)).toEqual([`${base}/a`, `${base}/broken`, `${base}/b`]);
+      expect(many[0].emails).toContain("vendas@loja-a.com.br");
+      expect(many[2].whatsapps).toContain("5521988887777");
+      expect(many[1].error ?? many[1].emails).toBeDefined();
+      const one = await run(`${base}/a`);
+      expect(Array.isArray(one)).toBe(false); // single URL keeps the old object shape
+      expect(one.emails).toContain("vendas@loja-a.com.br");
+    } finally {
+      server.stop(true);
+    }
+  }, 20_000);
 });

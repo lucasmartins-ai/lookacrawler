@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `maps` (CLI mode) hung for minutes, or forever, on a result page shorter
+  than `--limit`: it waited for the scraper's stdout to close, but the browser
+  the scraper drives keeps that pipe open. It now finishes on the limit, after
+  `idleMs` (default 15 s) without a new lead, or on the timeout with what
+  arrived, and kills the scraper's whole process group so no browser is left
+  running. Measured: a 20-lead query that hung for 400+ s returns in 13 s.
+
+### Added
+- `whatsapp_source` on Maps leads: `"google"` when the business listed a
+  WhatsApp link on its Maps profile, `"phone"` when the link was built from the
+  listing phone and is unconfirmed.
+- `contacts` takes several URLs and scans them in one process
+  (`--concurrency`, default 4); it prints an array in input order and reports
+  a failing site as `{ url, error }` instead of aborting.
+- `maps --lang` (default `pt`).
+
 ### Security
 - Requests sent through a proxy (`--proxy`, `LOOKACRAWLER_PROXIES`) bypassed
   the egress guard, so redirects, page-initiated fetch/XHR/WebSocket and DNS

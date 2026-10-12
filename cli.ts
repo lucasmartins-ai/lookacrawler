@@ -43,12 +43,15 @@ Options for 'extract':
 
 Options for 'contacts':
   --no-deep                   Skip crawling linked contact/about subpages.
+  --concurrency <n>           With several URLs: sites scanned in parallel (default 4, max 8).
+                              Several URLs print a JSON array; failures come back as { url, error }.
   --output, -o <file>         Write JSON output to a file.
 
 Options for 'maps':
   --email                     Let the scraper extract public emails (slower).
   --location <text>           Location passed to the Maps engine.
   --limit <n>                 Maximum leads (default: 20).
+  --lang <code>               Language for categories and labels (default: pt).
 
 Options for 'enrich-batch':
   --concurrency <n>           Parallel enrichments (default: 3).
@@ -197,12 +200,31 @@ async function runCli() {
       console.error("Error: Missing target URL for 'contacts' command.");
       process.exit(1);
     }
-    const url = positionalUrls[0];
     const deepScan = !args.includes("--no-deep");
     const outputFile = getOption(args, "--output") || getOption(args, "-o");
 
     try {
-      const result = await extractContacts({ url, deepScan });
+      let result: unknown;
+      if (positionalUrls.length === 1) {
+        result = await extractContacts({ url: positionalUrls[0], deepScan });
+      } else {
+        // Many sites in one process: no per-site startup, bounded parallelism.
+        // A failing site yields { url, error } instead of aborting the batch.
+        const concurrency = Math.max(1, Math.min(8, parseInt(getOption(args, "--concurrency") || "4", 10) || 4));
+        const out: unknown[] = new Array(positionalUrls.length);
+        let next = 0;
+        await Promise.all(Array.from({ length: Math.min(concurrency, positionalUrls.length) }, async () => {
+          while (next < positionalUrls.length) {
+            const i = next++;
+            try {
+              out[i] = await extractContacts({ url: positionalUrls[i], deepScan });
+            } catch (err: any) {
+              out[i] = { url: positionalUrls[i], error: String(err?.message || err) };
+            }
+          }
+        }));
+        result = out;
+      }
       const outputJson = JSON.stringify(result, null, 2);
       if (outputFile) {
         await writeFile(outputFile, outputJson, "utf8");
@@ -274,6 +296,7 @@ async function runCli() {
         limit,
         fastMode: args.includes("--fast-mode"),
         extractEmails: args.includes("--email"),
+        lang: getOption(args, "--lang"),
       });
       const outputJson = JSON.stringify(res, null, 2);
       if (outputFile) {
@@ -540,6 +563,7 @@ function getPositionalArgs(args: string[], command: string): string[] {
     "--port",
     "--host",
     "--location",
+    "--lang",
     "--limit",
     "--title",
   ]);
