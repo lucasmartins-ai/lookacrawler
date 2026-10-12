@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Requests sent through a proxy (`--proxy`, `LOOKACRAWLER_PROXIES`) bypassed
+  the egress guard, so redirects, page-initiated fetch/XHR/WebSocket and DNS
+  rebinding could reach internal hosts through the proxy — including this
+  machine's loopback via a trusted local proxy. The guard is now chained in
+  front of the proxy (HTTP CONNECT, SOCKS5, SOCKS4) and asks it for the
+  validated IP only. DNS is now resolved locally rather than at the proxy.
+
 ### Fixed
 - SSE server leaked sessions: Bun's `node:http` never emits `close` on the
   response when a client disconnects, so slots were never freed and the server

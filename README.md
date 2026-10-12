@@ -166,12 +166,18 @@ bun run cli.ts serve --transport sse --port 3000
 | `LOOKACRAWLER_SSE_MAX_SESSIONS` | Maximum concurrent SSE clients (each gets its own MCP session). Default `16`; further connections get `503` until one disconnects. |
 | `LOOKACRAWLER_MAX_BROWSERS` | Maximum concurrent Chromium processes (one per distinct proxy). Default `4`; idle ones are closed after `LOOKACRAWLER_BROWSER_IDLE_MS` (default 120000). |
 
-Outbound connections without a proxy go through a built-in loopback egress
-guard that resolves each destination once, refuses private/link-local/loopback
-addresses and connects to exactly the IP it checked. This covers redirects and
-requests a page makes on its own (fetch, XHR, WebSocket) in `deep` mode, and
-prevents DNS rebinding. `LOOKACRAWLER_ALLOW_LOCAL=true` turns all of this off
-(for local development only).
+Every outbound connection goes through a built-in loopback egress guard that
+resolves each destination once, refuses private/link-local/loopback addresses
+and connects to exactly the IP it checked. This covers redirects and requests a
+page makes on its own (fetch, XHR, WebSocket) in `deep` mode, and prevents DNS
+rebinding. With a proxy (`--proxy`, `LOOKACRAWLER_PROXIES`) the guard sits in
+front of it: it validates the destination, then asks the proxy to connect to
+that IP (HTTP `CONNECT`, SOCKS5 with optional user/password, or SOCKS4), so a
+proxy — even a trusted local one — can never be steered at an internal host.
+Side effect: DNS is resolved on this machine, not at the proxy, so geo-DNS/CDN
+edges follow your location rather than the proxy's, and SOCKS4 cannot reach
+IPv6-only sites. `LOOKACRAWLER_ALLOW_LOCAL=true` turns all of this off and talks
+to the proxy directly (for local development only).
 
 ### 3. Google Maps engine (optional)
 
