@@ -187,14 +187,15 @@ export async function fetchHtml(
     };
 
     // An explicit --proxy always wins (after validation); otherwise pull the
-    // next entry from the operator's LOOKACRAWLER_PROXIES pool. With no proxy
-    // at all, traffic goes through the local egress guard, which pins every
-    // connection to the IP it validated (no DNS rebinding, no redirect tricks).
+    // next entry from the operator's LOOKACRAWLER_PROXIES pool. Traffic goes
+    // through the local egress guard, which pins every connection to the IP it
+    // validated (no DNS rebinding, no redirect tricks) and chains the proxy, if
+    // any, behind it. LOOKACRAWLER_ALLOW_LOCAL=true talks to the proxy directly.
     const effectiveProxy = await selectProxy(proxy);
-    if (effectiveProxy) {
-      fetchOpts.proxy = effectiveProxy;
-    } else if (!isLocalAccessAllowed()) {
-      fetchOpts.proxy = (await getEgressGuard()).url;
+    if (isLocalAccessAllowed()) {
+      if (effectiveProxy) fetchOpts.proxy = effectiveProxy;
+    } else {
+      fetchOpts.proxy = (await getEgressGuard(effectiveProxy)).url;
     }
     // MITM-intercepting proxies (corporate TLS inspection, some residential
     // providers) present a forged cert. Bun has no per-request TLS knob we can

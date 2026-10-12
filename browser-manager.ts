@@ -93,9 +93,10 @@ interface LaunchProxy {
 /**
  * Get (or lazily create) a shared browser instance for a proxy key.
  *
- * Without an explicit proxy, the browser is routed through the local egress
- * guard (see `egress-guard.ts`), which validates the destination of every
- * connection — redirects, fetch/xhr and WebSockets included.
+ * The browser is always routed through the local egress guard (see
+ * `egress-guard.ts`), which validates the destination of every connection —
+ * redirects, fetch/xhr and WebSockets included. An upstream proxy is chained
+ * behind the guard; only LOOKACRAWLER_ALLOW_LOCAL=true talks to it directly.
  *
  * We prefer the REAL Google Chrome channel (`channel: "chrome"`) because its
  * TLS fingerprint, UA, and JS surface closely match a human browser and it is
@@ -119,15 +120,15 @@ export function toPlaywrightProxy(proxy: string): LaunchProxy {
 export async function getBrowser(proxy?: string): Promise<Browser> {
   let key: string;
   let launchProxy: LaunchProxy | undefined;
-  if (proxy && proxy.trim()) {
-    const validated = await validateProxyUrl(proxy);
-    key = `proxy:${validated}`;
-    launchProxy = toPlaywrightProxy(validated);
-  } else if (isLocalAccessAllowed()) {
-    key = "direct";
+  const upstream = proxy && proxy.trim() ? await validateProxyUrl(proxy) : undefined;
+  if (isLocalAccessAllowed()) {
+    key = upstream ? `proxy:${upstream}` : "direct";
+    launchProxy = upstream ? toPlaywrightProxy(upstream) : undefined;
   } else {
-    key = "guard";
-    const guard = await getEgressGuard();
+    // An upstream proxy is chained behind the guard (browser → guard → proxy),
+    // so redirects and page-initiated requests are still validated.
+    key = upstream ? `guard:${upstream}` : "guard";
+    const guard = await getEgressGuard(upstream);
     // "<-loopback>" removes Chromium's implicit proxy bypass for localhost, so
     // even a redirect to 127.0.0.1 has to go through the guard.
     launchProxy = { server: guard.server, bypass: "<-loopback>", username: guard.username, password: guard.password };

@@ -31,7 +31,7 @@ function isPrivateIPv4(address: string): boolean {
 }
 
 /** Expand an IPv6 literal into its eight 16-bit groups (handles `::` and a trailing dotted quad). */
-function parseIPv6(address: string): number[] | null {
+export function parseIPv6(address: string): number[] | null {
   let addr = address.split("%")[0]; // drop zone id
   const lastColon = addr.lastIndexOf(":");
   const maybeV4 = addr.slice(lastColon + 1);
@@ -174,6 +174,11 @@ function operatorProxies(): Set<string> {
       .map((p) => p.trim())
       .filter(Boolean)
   );
+}
+
+/** True for proxies the operator listed in LOOKACRAWLER_PROXIES / LOOKACRAWLER_ALLOWED_PROXIES. */
+export function isOperatorProxy(proxy: string): boolean {
+  return operatorProxies().has(proxy.trim());
 }
 
 /**
