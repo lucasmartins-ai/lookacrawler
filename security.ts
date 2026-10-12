@@ -170,7 +170,7 @@ function operatorProxies(): Set<string> {
     .join(",");
   return new Set(
     raw
-      .split(",")
+      .split(/[\s,]+/) // same separators as the proxyPool in resilience.ts
       .map((p) => p.trim())
       .filter(Boolean)
   );
