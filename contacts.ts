@@ -239,33 +239,26 @@ export function parseContactsFromDocument(
     });
   };
 
-  // 0. Cloudflare email protection — decode before anything else, since the
-  //    address is never present as plaintext anywhere in the document.
-  for (const el of Array.from(doc.querySelectorAll('a[href*="/cdn-cgi/l/email-protection"]'))) {
-    const hash = (el.getAttribute("href") || "").split("#")[1];
-    if (!hash) continue;
-    const decoded = cleanEmail(decodeCloudflareEmail(hash));
-    if (decoded) emails.add(decoded);
-  }
-
-  // 1. mailto: links
-  for (const a of Array.from(doc.querySelectorAll('a[href^="mailto:" i]'))) {
-    const mail = cleanEmail(a.getAttribute("href"));
-    if (mail) emails.add(mail);
-  }
-
-  // 2. tel: links. The site owner marked these as phones explicitly, so a
-  //    number that is possible but fails strict validation is still kept.
-  for (const a of Array.from(doc.querySelectorAll('a[href^="tel:" i]'))) {
-    addPhone(normalizePhone(a.getAttribute("href"), { defaultRegion, context: "tel" }), "tel");
-  }
-
-  // 3. WhatsApp, social and contact-subpage links in one walk over anchors
+  // 1. Email-protection, mailto:, tel:, WhatsApp, social and contact-subpage
+  //    links in one walk over anchors (one selector query instead of four).
   const ranked: { url: string; rank: number; order: number }[] = [];
   const seenLinks = new Set<string>();
   const anchors = Array.from(doc.querySelectorAll("a[href]"));
   anchors.forEach((a, order) => {
     const href = (a.getAttribute("href") || "").trim();
+    const scheme = href.slice(0, 7).toLowerCase();
+    // Cloudflare email protection: the address never appears as plaintext.
+    if (href.includes("/cdn-cgi/l/email-protection")) {
+      const decoded = cleanEmail(decodeCloudflareEmail(href.split("#")[1] || ""));
+      if (decoded) emails.add(decoded);
+    } else if (scheme === "mailto:") {
+      const mail = cleanEmail(href);
+      if (mail) emails.add(mail);
+    } else if (scheme.startsWith("tel:")) {
+      // The site owner marked this as a phone, so a number that is possible
+      // but fails strict validation is still kept.
+      addPhone(normalizePhone(href, { defaultRegion, context: "tel" }), "tel");
+    }
     if (
       href.includes("wa.me/") ||
       href.includes("api.whatsapp.com/send") ||
@@ -297,7 +290,11 @@ export function parseContactsFromDocument(
   // 3b. WhatsApp links outside anchors: chat widgets keep them in <script>,
   //     escaped JSON (`https:\/\/`) or data-* attributes, which is how most
   //     Brazilian sites expose the number.
-  for (const m of doc.documentElement.outerHTML.replace(/\\\//g, "/").matchAll(WHATSAPP_URL_REGEX)) {
+  const rawHtml = doc.documentElement.outerHTML;
+  // Cheap prefilter: the lookbehind regex over the whole serialized page is the
+  // costliest scan here, and most pages have no WhatsApp link at all.
+  const waMatches = /wa\.me|whatsapp/i.test(rawHtml) ? rawHtml.replace(/\\\//g, "/").matchAll(WHATSAPP_URL_REGEX) : [];
+  for (const m of waMatches) {
     const digits = m[1].replace(/\D/g, "");
     if (digits.length >= 10 && digits.length <= 15) whatsapps.add(digits);
   }
@@ -325,16 +322,23 @@ export function parseContactsFromDocument(
  * `<span>(62) 99999-9999</span><span>contato@x.com</span>` would read as a
  * single "email" starting with the phone digits.
  */
+const HIDDEN_TAGS = new Set(["script", "style", "noscript", "template"]);
+
 function visibleText(doc: Document): string {
   if (!doc.body) return "";
-  const walker = doc.createTreeWalker(doc.body, 4 /* NodeFilter.SHOW_TEXT */);
+  // Skip whole script/style subtrees instead of calling closest() per text node:
+  // jsdom's selector engine made that half the cost of parsing a large page.
   const parts: string[] = [];
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (!node.nodeValue) continue;
-    const parent = node.parentElement;
-    if (parent && parent.closest("script, style, noscript, template")) continue;
-    parts.push(node.nodeValue);
-  }
+  const walk = (node: Node): void => {
+    for (let child = node.firstChild; child; child = child.nextSibling) {
+      if (child.nodeType === 3) {
+        if (child.nodeValue) parts.push(child.nodeValue);
+      } else if (child.nodeType === 1 && !HIDDEN_TAGS.has((child as Element).localName)) {
+        walk(child);
+      }
+    }
+  };
+  walk(doc.body);
   return parts.join(" ");
 }
 
@@ -422,6 +426,8 @@ const CONTACT_KEYWORDS: [string, number][] = [
   ["trabalhe-conosco", 3],
 ];
 
+const PADDED_KEYWORDS = CONTACT_KEYWORDS.map(([kw, rank]) => [`-${kw}-`, rank] as const);
+
 const NON_PAGE_EXTENSIONS = /\.(?:pdf|jpe?g|png|gif|webp|svg|zip|rar|docx?|xlsx?|mp4|mp3)$/i;
 
 /** Lowercase, strip accents and turn every non-alphanumeric run into "-". */
@@ -436,8 +442,8 @@ function wordKey(value: string): string {
 function keywordRank(key: string): number | null {
   const padded = `-${key}-`;
   let best: number | null = null;
-  for (const [kw, rank] of CONTACT_KEYWORDS) {
-    if ((best === null || rank < best) && padded.includes(`-${kw}-`)) best = rank;
+  for (const [kw, rank] of PADDED_KEYWORDS) {
+    if ((best === null || rank < best) && padded.includes(kw)) best = rank;
   }
   return best;
 }
