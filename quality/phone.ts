@@ -210,9 +210,16 @@ const PHONE_CANDIDATE_REGEX =
  * Find phone numbers in free text, normalized and deduplicated by E.164.
  * Only valid numbers are returned.
  */
+const ID_LABEL_BEFORE =
+  /(?:protocolo|pedido|n[º°o]|c[óo]d(?:igo)?|cpf|cnpj|rg|nota(?: fiscal)?|nfe?|id|matr[íi]cula|processo|ref(?:er[êe]ncia)?|sku|ean|boleto|conta|ag[êe]ncia|cart[ãa]o|order|invoice|ticket)\s*[:#.º°-]?\s*$/i;
+
 export function findPhones(text: string, options: NormalizePhoneOptions = {}): NormalizedPhone[] {
   const out = new Map<string, NormalizedPhone>();
   for (const match of text.matchAll(PHONE_CANDIDATE_REGEX)) {
+    // "Protocolo 12945678909", "Pedido nº 11987654321": an unformatted digit run
+    // right after an identifier label is that identifier, not a phone. Formatted
+    // numbers ("Pedidos: (11) 98765-4321") are still accepted.
+    if (/^\d+$/.test(match[0]) && ID_LABEL_BEFORE.test(text.slice(Math.max(0, match.index! - 30), match.index))) continue;
     const parsed = normalizePhone(match[0], { ...options, context: options.context || "text" });
     if (parsed && parsed.valid && !out.has(parsed.e164)) {
       out.set(parsed.e164, parsed);

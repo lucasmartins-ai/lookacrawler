@@ -112,4 +112,11 @@ describe("Phone scanning in text (findPhones)", () => {
     findPhones(text);
     expect(performance.now() - started).toBeLessThan(2000);
   });
+
+  test("ignores bare digit runs labelled as identifiers", () => {
+    const text = "Protocolo 12945678909 · Pedido nº 11987654321 · código: 21987654321 · Ligue 11987654321";
+    expect(findPhones(text).map((p) => p.e164)).toEqual(["+5511987654321"]);
+    // Formatted numbers survive an identifier-looking word before them.
+    expect(findPhones("Pedidos: (11) 98765-4321").map((p) => p.e164)).toEqual(["+5511987654321"]);
+  });
 });
