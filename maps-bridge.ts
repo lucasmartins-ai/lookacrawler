@@ -597,8 +597,10 @@ export async function discoverLocalLeadsViaCli(
 
       // maps-leads exits 0 even when every job failed; an empty run that logged
       // errors is a failure, not "no businesses here".
+      // "inactivity timeout" is how maps-leads ends a search with no results:
+      // that is an empty answer, not a failure.
       const scraperError = leads.length === 0
-        ? (stderrBuffer.match(/"error":"([^"]+)"/)?.[1] ?? "")
+        ? ([...stderrBuffer.matchAll(/"error":"([^"]+)"/g)].map((m) => m[1]).find((e) => !/inactivity timeout/i.test(e)) ?? "")
         : "";
       resolve({
         success: leads.length > 0 || (code === 0 && !timedOut && !scraperError),

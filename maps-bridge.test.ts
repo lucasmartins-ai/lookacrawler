@@ -166,6 +166,17 @@ describe("Maps CLI completion", () => {
     expect(res.error).toContain("target closed");
   });
 
+  test("a search with no results is an empty success, not a failure", async () => {
+    const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
+    const path = `${dir}/nothing-found`;
+    Bun.write(path, `#!/bin/sh\necho '{"level":"error","error":"inactivity timeout: 0001-01-01T00:00:00Z","message":"scrapemate exited"}' >&2\nexit 0\n`);
+    require("node:fs").chmodSync(path, 0o755);
+    const res = await discoverLocalLeads("lojas", { customBinaryPath: path, preferDaemon: false });
+    expect(res.success).toBe(true);
+    expect(res.data).toEqual([]);
+    expect(res.error).toBeUndefined();
+  });
+
   test("a timeout returns what arrived instead of hanging", async () => {
     const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
     const bin = fakeBinary(dir, [{ title: "Loja C", cid: "3" }]);

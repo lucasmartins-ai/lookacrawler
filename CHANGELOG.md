@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `maps` reported a search with no results as a failure ("maps-leads failed:
+  inactivity timeout"): that is how the scraper ends an empty search. It is
+  an empty success again; a crashed browser still fails with its error.
+
+### Fixed
 - `maps` (CLI mode) hung for minutes, or forever, on a result page shorter
   than `--limit`: it waited for the scraper's stdout to close, but the browser
   the scraper drives keeps that pipe open. It now finishes on the limit, after
