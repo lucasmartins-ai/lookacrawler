@@ -436,6 +436,14 @@ function startServer(): Promise<{ server: Server; port: number }> {
       rejectSocket(socket, "502 Bad Gateway", errorMessage(error));
       return;
     }
+    // Bun hands "connect" a different socket object than "connection", so the
+    // tunnel ends must be tracked here or stopEgressGuard() waits for the 30 s
+    // idle timeout (every one-shot CLI run stalled ~5 s on exit because of it).
+    for (const sock of [socket, outbound]) {
+      sock.unref();
+      guardSockets.add(sock);
+      sock.once("close", () => guardSockets.delete(sock));
+    }
     socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
     if (head && head.length) outbound.write(head);
     pipeBoth(socket, outbound);

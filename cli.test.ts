@@ -40,5 +40,6 @@ describe("LookaCrawler CLI Suite", () => {
     } finally {
       server.stop(true);
     }
-  });
+    // Spawns the CLI (~1-3 s cold start); the default 5 s fails on a loaded machine.
+  }, 15_000);
 });

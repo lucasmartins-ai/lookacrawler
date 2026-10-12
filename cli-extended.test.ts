@@ -1,8 +1,9 @@
 import { describe, it, expect } from "bun:test";
 
-async function runCli(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+async function runCli(args: string[], env?: Record<string, string>): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn(["bun", "cli.ts", ...args], {
     cwd: import.meta.dir,
+    env: { ...process.env, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -84,20 +85,39 @@ describe("CLI Extended Integration Suite (cli.ts)", () => {
     expect(res.stderr).toContain("Unknown command: unsupported_cmd");
   });
 
-  it("should successfully extract URL in JSON format with --json flag", async () => {
-    const res = await runCli(["extract", "https://example.com", "--mode", "fast", "--json", "--no-cache"]);
+  // Local fixture instead of example.com: these timed out in CI when the
+  // runner's network was slow, and the suite must not depend on the internet.
+  const withFixture = async (run: (url: string) => Promise<void>) => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () =>
+        new Response("<html><body><main><h1>Fixture</h1><p>This domain is for use in documentation examples.</p></main></body></html>", {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+    });
+    try {
+      await run(`http://127.0.0.1:${server.port}/`);
+    } finally {
+      server.stop(true);
+    }
+  };
+  const LOCAL = { LOOKACRAWLER_ALLOW_LOCAL: "true" };
+
+  it("should successfully extract URL in JSON format with --json flag", () => withFixture(async (url) => {
+    const res = await runCli(["extract", url, "--mode", "fast", "--json", "--no-cache"], LOCAL);
     expect(res.exitCode).toBe(0);
     const parsed = JSON.parse(res.stdout);
-    expect(parsed.url).toBe("https://example.com");
+    expect(parsed.url).toBe(url);
     expect(parsed.mode).toBe("fast");
     expect(parsed.cached).toBe(false);
     expect(typeof parsed.content).toBe("string");
     expect(parsed.content.length).toBeGreaterThan(0);
-  }, 15000);
+  }), 15000);
 
-  it("should successfully extract URL when flags precede the target URL", async () => {
-    const res = await runCli(["extract", "--mode", "fast", "--no-cache", "https://example.com"]);
+  it("should successfully extract URL when flags precede the target URL", () => withFixture(async (url) => {
+    const res = await runCli(["extract", "--mode", "fast", "--no-cache", url], LOCAL);
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toContain("This domain is for use in documentation examples");
-  }, 15000);
+  }), 15000);
 });
