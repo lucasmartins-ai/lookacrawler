@@ -20,7 +20,17 @@ const echo = net.createServer((sock) => sock.on("data", (d) => sock.write(`echo:
 await new Promise<void>((r) => echo.listen(0, "127.0.0.1", r));
 const echoPort = (echo.address() as net.AddressInfo).port;
 
+// Target that lies about Content-Length and appends a fake second response.
+const liar = net.createServer((sock) =>
+  sock.once("data", () => sock.end("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhelloHTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nEVIL"))
+);
+await new Promise<void>((r) => liar.listen(0, "127.0.0.1", r));
+const liarPort = (liar.address() as net.AddressInfo).port;
+
 function splice(client: net.Socket, port: number, leftover: Buffer) {
+  // Hold the client's bytes until the onward socket is up; a flowing socket with
+  // no "data" listener would drop whatever the guard sends in between.
+  client.pause();
   const out = net.connect({ host: "127.0.0.1", port }, () => {
     if (leftover.length) out.write(leftover);
     client.pipe(out);
@@ -45,7 +55,8 @@ const httpUpstream = net.createServer((client) => {
     httpSeen.push({ target: authority, auth });
     if (method !== "CONNECT") return void client.end("HTTP/1.1 405 Method Not Allowed\r\n\r\n");
     client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-    splice(client, authority.endsWith(":80") ? target.port! : echoPort, buf.subarray(end + 4));
+    const dest = authority.endsWith(":80") ? target.port! : authority.endsWith(":81") ? liarPort : echoPort;
+    splice(client, dest, buf.subarray(end + 4));
   };
   client.on("data", onData);
 });
@@ -122,6 +133,22 @@ async function connectThroughGuard(guardUrl: string, authority: string): Promise
   });
 }
 
+/** Raw plain-HTTP request through the guard; returns everything until close. */
+async function rawThroughGuard(guardUrl: string, method: string, url: string): Promise<string> {
+  const u = new URL(guardUrl);
+  const auth = Buffer.from(`${u.username}:${u.password}`).toString("base64");
+  return await new Promise((resolve, reject) => {
+    const sock = net.connect({ host: "127.0.0.1", port: Number(u.port) }, () =>
+      sock.write(`${method} ${url} HTTP/1.1\r\nHost: ${new URL(url).host}\r\nProxy-Authorization: Basic ${auth}\r\n\r\n`)
+    );
+    let data = "";
+    sock.on("data", (d) => (data += d));
+    sock.on("close", () => resolve(data));
+    sock.on("error", reject);
+    setTimeout(() => (sock.destroy(), resolve(data)), 1000);
+  });
+}
+
 describe("Egress guard chained to an upstream proxy", () => {
   const prevAllowLocal = process.env.LOOKACRAWLER_ALLOW_LOCAL;
   const prevAllowed = process.env.LOOKACRAWLER_ALLOWED_PROXIES;
@@ -145,6 +172,7 @@ describe("Egress guard chained to an upstream proxy", () => {
     await stopEgressGuard();
     target.stop(true);
     echo.close();
+    liar.close();
     httpUpstream.close();
     socksUpstream.close();
   });
@@ -207,5 +235,26 @@ describe("Egress guard chained to an upstream proxy", () => {
     // Not operator-listed and resolves to private space: refused at connect time.
     const guard = await getEgressGuard("http://evil.private-test:8080");
     expect((await connectThroughGuard(guard.url, "public.example:443")).status).toBe("502");
+  });
+
+  it("keeps a route's credentials stable after LRU eviction, so a running browser recovers", async () => {
+    const before = await getEgressGuard(httpProxy);
+    for (let i = 0; i < 1100; i++) await getEgressGuard(`http://1.1.1.1:${10000 + i}`);
+    const after = await getEgressGuard(httpProxy);
+    expect(after.password).toBe(before.password);
+    expect((await connectThroughGuard(before.url, "public.example:443")).status).toBe("200");
+  });
+
+  it("closes the client connection instead of trusting the target's Content-Length", async () => {
+    const guard = await getEgressGuard(httpProxy);
+    const raw = (await rawThroughGuard(guard.url, "GET", "http://liar.example:81/")).toLowerCase();
+    const [head, body] = [raw.slice(0, raw.indexOf("\r\n\r\n")), raw.slice(raw.indexOf("\r\n\r\n") + 4)];
+    expect(head).not.toContain("content-length: 5");
+    expect(head).toContain("connection: close");
+    // Re-framed as chunked: the smuggled "second response" is just body bytes.
+    expect(head).toContain("transfer-encoding: chunked");
+    expect(body).toContain("hellohttp/1.1 200 ok");
+    const headRes = await rawThroughGuard(guard.url, "HEAD", "http://liar.example:81/");
+    expect(headRes.slice(headRes.indexOf("\r\n\r\n") + 4)).toBe("");
   });
 });

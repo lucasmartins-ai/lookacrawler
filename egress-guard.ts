@@ -1,7 +1,7 @@
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import net from "node:net";
 import tls from "node:tls";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { isOperatorProxy, isLocalAccessAllowed, parseIPv6, resolvePublicAddress } from "./security.js";
 import { registerCleanup } from "./lifecycle.js";
 
@@ -46,17 +46,19 @@ export const BLOCKED_HEADER = "x-lookacrawler-blocked";
 
 const USERNAME = "lc";
 const DIRECT = ""; // route key for "no upstream proxy"
-// ponytail: LRU of 1024 upstreams; evicted entries just get 407 until re-registered.
+// ponytail: LRU of 1024 upstreams; an evicted route answers 407 until its next
+// getEgressGuard() call re-registers it with the SAME password (HMAC of the route),
+// so a running browser recovers instead of being locked out for good.
 const MAX_ROUTES = 1024;
 const MAX_HEAD_BYTES = 64 * 1024;
-const MAX_FORWARDED_BODY_BYTES = 10 * 1024 * 1024;
+const MAX_FORWARDED_BODY_BYTES = 1024 * 1024; // buffered per request; a crawler only sends small forms
 
 let serverPromise: Promise<{ server: Server; port: number }> | null = null;
 let guardServer: Server | null = null;
 const guardSockets = new Set<net.Socket>();
-/** route key (upstream URL or DIRECT) → password; insertion order = LRU order. */
-const passwords = new Map<string, string>();
-/** sha256(expected Proxy-Authorization header) → route key. */
+/** Per-process key for deriving each route's password. */
+const ROUTE_SECRET = randomBytes(32);
+/** sha256(expected Proxy-Authorization header) → route key; insertion order = LRU order. */
 const routes = new Map<string, string>();
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -320,13 +322,29 @@ async function forwardOverTunnel(
     const i = line.indexOf(":");
     if (i <= 0) continue;
     const name = line.slice(0, i).trim().toLowerCase();
-    if (name === "connection" || name === "keep-alive" || name === "transfer-encoding") continue;
+    // The body is "everything until the target closes" (HTTP/1.0), so the client
+    // connection closes too instead of trusting the target's Content-Length:
+    // bytes past it could otherwise be read as the next response on a reused socket.
+    if (name === "connection" || name === "keep-alive" || name === "transfer-encoding" || name === "content-length") continue;
     const value = line.slice(i + 1).trim();
     const prev = out[name];
     out[name] = prev === undefined ? value : [...(Array.isArray(prev) ? prev : [prev]), value];
   }
+  out.connection = "close";
   res.writeHead(status, out);
+  if (req.method === "HEAD" || status < 200 || status === 204 || status === 304) {
+    tunnel.destroy();
+    res.end();
+    return;
+  }
   if (rest.length) res.write(rest);
+  // A small response often arrives together with the target's FIN, and the
+  // handshake reader has already consumed "end": pipe() would then never end
+  // res and the client would hang until the idle timeout.
+  if (tunnel.readableEnded || tunnel.destroyed) {
+    res.end();
+    return;
+  }
   tunnel.on("error", () => res.destroy());
   res.on("close", () => tunnel.destroy());
   tunnel.pipe(res);
@@ -447,20 +465,13 @@ function startServer(): Promise<{ server: Server; port: number }> {
   });
 }
 
-/** Password for a route, created on first use and refreshed in LRU order. */
+/** Password for a route: deterministic per process, refreshed in LRU order. */
 function passwordFor(route: string): string {
-  let password = passwords.get(route);
-  if (password === undefined) {
-    password = randomBytes(18).toString("base64url");
-    routes.set(digest(authHeader(USERNAME, password)), route);
-  }
-  passwords.delete(route);
-  passwords.set(route, password);
-  while (passwords.size > MAX_ROUTES) {
-    const [oldest, oldPassword] = passwords.entries().next().value as [string, string];
-    passwords.delete(oldest);
-    routes.delete(digest(authHeader(USERNAME, oldPassword)));
-  }
+  const password = createHmac("sha256", ROUTE_SECRET).update(route).digest("base64url");
+  const key = digest(authHeader(USERNAME, password));
+  routes.delete(key);
+  routes.set(key, route);
+  while (routes.size > MAX_ROUTES) routes.delete(routes.keys().next().value as string);
   return password;
 }
 
@@ -490,7 +501,6 @@ export async function stopEgressGuard(): Promise<void> {
   const server = guardServer;
   guardServer = null;
   serverPromise = null;
-  passwords.clear();
   routes.clear();
   if (!server) return;
   // server.close() only resolves once every connection has ended, and clients
