@@ -8,6 +8,8 @@ export interface GoogleMapsLead {
   input_id?: string;
   link?: string;
   cid?: string;
+  /** Google's stable place id; the safest dedupe key across queries. */
+  place_id?: string;
   title: string;
   category?: string;
   categories?: string[];
@@ -637,6 +639,7 @@ export async function discoverLocalLeadsViaCli(
           input_id: parsed.input_id,
           link: parsed.link,
           cid: parsed.cid,
+          place_id: parsed.place_id || undefined,
           title: parsed.title,
           category: parsed.category,
           categories: parsed.categories,

@@ -128,7 +128,7 @@ describe("Maps CLI completion", () => {
   test("finishes on inactivity even when the scraper hangs, and kills its whole process group", async () => {
     const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
     const bin = fakeBinary(dir, [
-      { title: "Loja A", phone: "+55 62 99999-0001", cid: "1", link_sources: [{ link: "https://api.whatsapp.com/send?phone=5562999990001", source: "x" }] },
+      { title: "Loja A", phone: "+55 62 99999-0001", cid: "1", place_id: "ChIJ_test_A", link_sources: [{ link: "https://api.whatsapp.com/send?phone=5562999990001", source: "x" }] },
       { title: "Loja B", phone: "+55 62 3000-1000", cid: "2" },
     ]);
     const started = Date.now();
@@ -140,6 +140,7 @@ describe("Maps CLI completion", () => {
     expect(res.data[0].whatsapp_source).toBe("google");
     expect(res.data[1].whatsapp_source).toBe("phone");
     expect(res.data[1].phone_type).toBe("fixed");
+    expect(res.data[0].place_id).toBe("ChIJ_test_A");
     await Bun.sleep(200);
     const pid = Number(require("node:fs").readFileSync(`${dir}/grandchild.pid`, "utf8"));
     expect(() => process.kill(pid, 0)).toThrow(); // the "browser" is gone too
