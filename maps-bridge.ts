@@ -315,7 +315,11 @@ export async function discoverLocalLeadsViaDaemon(
     : query.trim();
 
   const limit = options.limit || 20;
-  const depth = options.depth || Math.max(1, Math.min(10, Math.ceil(limit / 10)));
+  // One scroll page. Measured 2026-10-12 on the bundled maps-leads: the same
+  // query returns 18 leads at -depth 1 and 0 at -depth 2 (the browser dies
+  // with "playwright: target closed" during the second scroll). A page holds
+  // ~20 results, so more leads need more queries, not more depth.
+  const depth = options.depth || 1;
   const lang = options.lang || "pt-BR";
   const timeoutMs = options.timeoutMs || 90000;
 
@@ -490,7 +494,11 @@ export async function discoverLocalLeadsViaCli(
     : query.trim();
 
   const limit = options.limit || 20;
-  const depth = options.depth || Math.max(1, Math.min(10, Math.ceil(limit / 10)));
+  // One scroll page. Measured 2026-10-12 on the bundled maps-leads: the same
+  // query returns 18 leads at -depth 1 and 0 at -depth 2 (the browser dies
+  // with "playwright: target closed" during the second scroll). A page holds
+  // ~20 results, so more leads need more queries, not more depth.
+  const depth = options.depth || 1;
   const concurrency = options.concurrency || 2;
   const lang = options.lang || "pt";
   const timeoutMs = options.timeoutMs || 90000;
@@ -587,18 +595,25 @@ export async function discoverLocalLeadsViaCli(
         child.unref?.();
       }
 
+      // maps-leads exits 0 even when every job failed; an empty run that logged
+      // errors is a failure, not "no businesses here".
+      const scraperError = leads.length === 0
+        ? (stderrBuffer.match(/"error":"([^"]+)"/)?.[1] ?? "")
+        : "";
       resolve({
-        success: leads.length > 0 || (code === 0 && !timedOut),
+        success: leads.length > 0 || (code === 0 && !timedOut && !scraperError),
         data: leads,
         total: leads.length,
         query: fullQuery,
         executionTimeMs: Date.now() - startTime,
         source: "cli",
         error:
-          leads.length === 0 && code !== 0
+          leads.length === 0 && (code !== 0 || scraperError)
             ? timedOut
               ? "Timed out while searching Google Maps."
-              : `Processo finalizou com erro (code ${code}): ${stderrBuffer.slice(0, 300)}`
+              : scraperError
+                ? `maps-leads failed: ${scraperError}`
+                : `Processo finalizou com erro (code ${code}): ${stderrBuffer.slice(0, 300)}`
             : undefined,
       });
     };

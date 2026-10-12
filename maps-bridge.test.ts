@@ -146,6 +146,26 @@ describe("Maps CLI completion", () => {
     expect(() => process.kill(pid, 0)).toThrow(); // the "browser" is gone too
   });
 
+  test("scrolls one page by default: -depth 2+ kills the scraper's browser", async () => {
+    const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
+    const path = `${dir}/echo-args`;
+    // Prints its own argv as the lead title, then exits.
+    Bun.write(path, `#!/bin/sh\nprintf '{"title":"%s","cid":"1"}\\n' "$*"\n`);
+    require("node:fs").chmodSync(path, 0o755);
+    const res = await discoverLocalLeads("lojas", { customBinaryPath: path, preferDaemon: false, limit: 20, idleMs: 300 });
+    expect(res.data[0].title).toContain("-depth 1 ");
+  });
+
+  test("an empty run that logged scraper errors is a failure, not an empty success", async () => {
+    const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
+    const path = `${dir}/crashing`;
+    Bun.write(path, `#!/bin/sh\necho '{"level":"error","error":"playwright: target closed","message":"error while processing job"}' >&2\nexit 0\n`);
+    require("node:fs").chmodSync(path, 0o755);
+    const res = await discoverLocalLeads("lojas", { customBinaryPath: path, preferDaemon: false });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("target closed");
+  });
+
   test("a timeout returns what arrived instead of hanging", async () => {
     const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
     const bin = fakeBinary(dir, [{ title: "Loja C", cid: "3" }]);

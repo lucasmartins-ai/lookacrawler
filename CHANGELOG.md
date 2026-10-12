@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `idleMs` (default 15 s) without a new lead, or on the timeout with what
   arrived, and kills the scraper's whole process group so no browser is left
   running. Measured: a 20-lead query that hung for 400+ s returns in 13 s.
+- `maps` returned an empty "success" for many queries: it asked for
+  `-depth ceil(limit/10)`, and at depth 2 the bundled scraper's browser dies
+  on the second scroll ("playwright: target closed"). Measured on the same
+  query: 18 leads at depth 1, 0 at depth 2. Depth now defaults to 1, and an
+  empty run that logged scraper errors fails with that error instead of
+  looking like "no businesses here".
 
 ### Added
 - `whatsapp_source` on Maps leads: `"google"` when the business listed a
