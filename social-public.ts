@@ -114,20 +114,19 @@ export function parseShorthandNumber(str?: string | null): number | undefined {
  * Extract meta tag content by property or name from HTML.
  */
 export function extractMetaTag(html: string, nameOrProperty: string): string | undefined {
-  const pattern = new RegExp(
-    `<meta[^>]*(?:property|name)=["']${nameOrProperty}["'][^>]*content=["']([^"']*)["']`,
-    "i"
-  );
-  const match = html.match(pattern);
-  if (match && match[1]) return match[1].trim();
-
-  // Try reverse order: content first, then property
-  const reversePattern = new RegExp(
-    `<meta[^>]*content=["']([^"']*)["'][^>]*(?:property|name)=["']${nameOrProperty}["']`,
-    "i"
-  );
-  const revMatch = html.match(reversePattern);
-  return revMatch && revMatch[1] ? revMatch[1].trim() : undefined;
+  // Bounded scan: one unbounded `<meta[^>]*...` regex over a hostile page with
+  // thousands of unclosed `<meta ` tags went quadratic (240 KB took 18 s). Meta
+  // tags live in <head>, so the first 200 KB and 1 KB per tag are plenty.
+  const want = nameOrProperty.toLowerCase();
+  const attr = (tag: string, name: string) =>
+    tag.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i"))?.slice(1).find((v) => v !== undefined);
+  for (const [tag] of html.slice(0, 200_000).matchAll(/<meta\b[^>]{0,1000}>/gi)) {
+    const key = attr(tag, "property") ?? attr(tag, "name");
+    if (key?.toLowerCase() !== want) continue;
+    const content = attr(tag, "content")?.trim();
+    if (content) return content;
+  }
+  return undefined;
 }
 
 /**

@@ -138,3 +138,7 @@ describe("scorePurchaseIntent (generic lexicon, pt-BR + EN)", () => {
     expect(scoreSocialItems([{ author: "A", text: "procuro um sofá" }], { vertical: "car" })).toHaveLength(0);
   });
 });
+
+test("inherited object keys are not verticals", () => {
+  expect(() => scorePurchaseIntent("x", "constructor" as never)).toThrow(/Unknown vertical/);
+});

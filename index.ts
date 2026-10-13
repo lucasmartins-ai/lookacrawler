@@ -690,12 +690,12 @@ Login-walled pages return only a summary line. Other hosts return platform "unkn
   const growthInput = {
     url: z.string().url().describe("The client's own website."),
     niche: z.string().min(1).max(200).describe("Business niche, e.g. 'dental clinic'."),
-    location: z.string().max(200).default("").optional().describe("City or region for the competitor search."),
+    location: z.string().min(1).max(200).describe("City or region for the competitor search."),
     company_name: z.string().max(200).optional().describe("Company name override."),
     max_competitors: z.number().int().min(1).max(10).default(3).optional().describe("Competitors to review (default: 3)."),
     locale: z.enum(["pt", "en"]).default("pt").optional().describe("Language of the generated text (default: pt)."),
   };
-  type GrowthArgs = { url: string; niche: string; location?: string; company_name?: string; max_competitors?: number; locale?: "pt" | "en" };
+  type GrowthArgs = { url: string; niche: string; location: string; company_name?: string; max_competitors?: number; locale?: "pt" | "en" };
   const runGrowth = async (a: GrowthArgs) => {
     await validateTargetUrl(a.url);
     const { runGrowthEngine } = await import("./growth-planner.js");
@@ -703,7 +703,7 @@ Login-walled pages return only a summary line. Other hosts return platform "unkn
       websiteUrl: a.url,
       companyName: a.company_name,
       niche: a.niche,
-      location: a.location ?? "",
+      location: a.location,
       maxCompetitors: a.max_competitors,
       locale: a.locale,
     });

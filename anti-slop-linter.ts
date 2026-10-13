@@ -64,7 +64,7 @@ export const BANNED_WORDS_PT: Array<{ pattern: RegExp; rule: string; suggestion:
     suggestion: "Use 'analisar', 'verificar' ou entre direto no assunto",
   },
   {
-    pattern: /\b(vale\s+(a\s+pena\s+)?destacar(\s+que)?|[eé]\s+importante\s+(notar|ressaltar)\s+que)\b/gi,
+    pattern: /(?<![\p{L}\d])(vale\s+(a\s+pena\s+)?destacar(\s+que)?|[eé]\s+importante\s+(notar|ressaltar)\s+que)\b/giu,
     rule: "Sinalizador de transição desnecessário (filler)",
     suggestion: "Elimine a introdução e declare o fato diretamente",
   },
@@ -286,7 +286,7 @@ export function sanitizeCopy(text: string): string {
   cleaned = cleaned.replace(/^(in today['’]?s\s+(fast-paced|rapidly\s+evolving|digital)\s+(world|landscape|age))[,.\s]*/gi, "");
 
   // Remove filler signposts
-  cleaned = cleaned.replace(/\b(vale\s+destacar\s+que|é\s+importante\s+notar\s+que|it['’]?s\s+worth\s+noting\s+that)\s*/gi, "");
+  cleaned = cleaned.replace(/(?<![\p{L}\d])(vale\s+destacar\s+que|[eé]\s+importante\s+notar\s+que|it['’]?s\s+worth\s+noting\s+that)\s*/giu, "");
 
   // Replace buzzwords with simple active forms
   cleaned = cleaned.replace(/\b(revolucion[aá]ri[ao]s?|divisor de [aá]guas)\b/gi, "eficiente");

@@ -72,3 +72,9 @@ describe("gtm pipeline (offline)", () => {
     expect(text).toContain(`"'=HYPERLINK`);
   });
 });
+
+test("only BR/PT leads get Portuguese drafts", () => {
+  const lead = (country: string) => ({ complete_address: { country } }) as never;
+  expect(detectLocale(lead("BR"))).toBe("pt");
+  expect(detectLocale(lead("ES"))).toBe("en");
+});

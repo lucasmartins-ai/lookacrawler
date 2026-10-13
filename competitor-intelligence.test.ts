@@ -107,4 +107,19 @@ describe("analyzeCompetitors + generateGrowthPlan (offline)", () => {
       expect(all).toContain(locale === "pt" ? "[inclua um número real" : "[add a real number");
     }
   });
+
+  test("no reviewable competitors is reported as unknown, not as 'they cover the basics'", async () => {
+    const audit = auditHtml(GOOD, "https://studio.example/");
+    const a = await analyzeCompetitors(audit, "dentista", "Goiânia", { competitors: [], locale: "en" });
+    expect(a.marketGaps.conversionGaps).toEqual(["their websites could not be reviewed in this scan"]);
+    expect(generateGrowthPlan(a).weeklyContentPlan[0].proof).toContain("We looked at 0 local competitors");
+  });
+
+  test("WhatsApp is only claimed when the audit saw it", async () => {
+    const audit = auditHtml(BARE, "https://bare.example/");
+    expect(audit.conversion.hasWhatsApp).toBe(false);
+    const plan = generateGrowthPlan(await analyzeCompetitors(audit, "dentista", "Goiânia", { competitors: [], locale: "pt" }));
+    expect(plan.weeklyContentPlan[0].mechanism).toContain("[seu canal de atendimento]");
+    expect(JSON.stringify(plan.seo)).not.toContain("WhatsApp");
+  });
 });

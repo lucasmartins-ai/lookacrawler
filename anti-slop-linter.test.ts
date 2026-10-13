@@ -61,3 +61,8 @@ describe("sanitizeCopy", () => {
     expect(sanitizeCopy("In today's fast-paced world, we ship.")).toBe("we ship.");
   });
 });
+
+test("accented 'É importante notar que' is flagged and stripped", () => {
+  expect(lintAntiSlop("É importante notar que o preço caiu.", "pt").violations.length).toBeGreaterThan(0);
+  expect(sanitizeCopy("É importante notar que o preço caiu.")).toBe("o preço caiu.");
+});

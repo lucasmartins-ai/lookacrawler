@@ -60,12 +60,13 @@ export interface GtmResult {
   items: GtmItem[];
 }
 
-const EN_COUNTRIES = new Set(["GB", "UK", "US", "IE", "AU", "NZ", "CA"]);
+// Drafts exist in pt-BR and English only: Portuguese for BR/PT, English elsewhere.
+const PT_COUNTRIES = new Set(["BR", "PT"]);
 
 /** Country from Maps wins; otherwise a keyword/postcode guess over address + location. */
 export function detectLocale(lead?: Partial<GoogleMapsLead>, address?: string, location?: string): Locale {
   const country = lead?.complete_address?.country?.toUpperCase();
-  if (country) return EN_COUNTRIES.has(country) ? "en" : "pt";
+  if (country) return PT_COUNTRIES.has(country) ? "pt" : "en";
   const text = `${address || ""} ${location || ""}`.toLowerCase();
   if (/\b(uk|united kingdom|england|scotland|wales|ireland|usa|united states|australia|canada)\b/.test(text)) return "en";
   if (/\b[a-z]{1,2}\d[a-z\d]?\s*\d[a-z]{2}\b/.test(text)) return "en"; // UK postcode

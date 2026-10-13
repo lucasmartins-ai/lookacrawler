@@ -28,7 +28,7 @@ Commands:
   social <sub> ...            Read/write Facebook & Instagram through the logged-in
                               Antigravity browser bridge (127.0.0.1:8765).
   audit <url>                 SEO / conversion audit of a site (no API keys).
-  intel --site <url> --niche <n> [--loc <l>]
+  intel --site <url> --niche <n> --loc <l>
                               Audit + Maps competitor review + deterministic growth plan.
   gtm --niche <n> [--loc <l>] Maps discovery -> enrichment -> outreach draft -> JSONL/CSV file.
                               Draft only; nothing is sent.
@@ -728,8 +728,9 @@ async function runCli() {
   if (command === "intel") {
     const site = getOption(args, "--site");
     const niche = getOption(args, "--niche");
-    if (!site || !niche) {
-      console.error("Error: usage: lookacrawler intel --site <url> --niche <niche> [--loc <location>] [--limit <n>] [--locale pt|en]");
+    const loc = getOption(args, "--loc");
+    if (!site || !niche || !loc) {
+      console.error("Error: usage: lookacrawler intel --site <url> --niche <niche> --loc <location> [--limit <n>] [--locale pt|en]");
       process.exit(1);
     }
     try {
@@ -739,7 +740,7 @@ async function runCli() {
         websiteUrl: site,
         companyName: getOption(args, "--name"),
         niche,
-        location: getOption(args, "--loc") || "",
+        location: loc,
         maxCompetitors: Number(getOption(args, "--limit")) || 3,
         locale,
       });

@@ -111,7 +111,7 @@ function budgetOf(t: string): number | null {
  *   a match raises the score and is reported.
  */
 export function scorePurchaseIntent(text: string, vertical = "generic", regions: string[] = []): PurchaseIntent {
-  const lex = LEXICONS[vertical];
+  const lex = Object.hasOwn(LEXICONS, vertical) ? LEXICONS[vertical] : undefined;
   if (!lex) throw new Error(`Unknown vertical "${vertical}". Available: ${Object.keys(LEXICONS).join(", ")}`);
   const t = strip(text || "");
   const hits = (rules: RegExp[]) => rules.map((r) => t.match(r)?.[0]).filter((m): m is string => !!m);

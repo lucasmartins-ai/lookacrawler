@@ -56,6 +56,8 @@ interface Ctx {
   gap: string;
   /** Operator slot for facts we cannot observe. */
   slot: string;
+  /** Reply channel; WhatsApp only when observed on the site. */
+  channel: string;
 }
 
 const T = {
@@ -64,7 +66,7 @@ const T = {
     channels: ["Instagram", "Google Meu Negócio", "WhatsApp Status", "Instagram", "LinkedIn"],
     fallbackServices: (niche: string) => [niche, `atendimento de ${niche}`, `orçamento de ${niche}`],
     metaTitle: (c: string, n: string, l: string) => `${c} | ${n} em ${l}`,
-    metaDesc: (c: string, l: string, s: string[]) => `${c} em ${l}: ${s.join(", ")}. Resposta rápida por WhatsApp.`,
+    metaDesc: (c: string, l: string, s: string[]) => `${c} em ${l}: ${s.join(", ")}.`,
     keywords: (n: string, l: string, s: string) => [
       [`${n} em ${l}`, "commercial", "high"],
       [`${s} ${l}`, "transactional", "high"],
@@ -73,9 +75,10 @@ const T = {
       [`melhor ${n} em ${l}`, "commercial", "medium"],
     ] as const,
     slot: "[inclua um número real do seu histórico]",
+    channelSlot: "[seu canal de atendimento]",
     gapDefault: "Demora de retorno nos canais digitais",
     posts: (c: Ctx) => [
-      { theme: `O que olhar antes de escolher ${c.niche} em ${c.loc}`, hook: `Antes de fechar com um(a) ${c.niche} em ${c.loc}, compare três coisas: resposta, preço claro e avaliações recentes.`, proof: `Olhamos ${c.n} concorrentes da região: ${c.gap}.`, mechanism: `Na ${c.company}, o primeiro retorno sai pelo WhatsApp, com horários e valores à vista.`, callToAction: `Chame no WhatsApp pelo link da bio e veja os horários livres desta semana.`, gap: c.gap },
+      { theme: `O que olhar antes de escolher ${c.niche} em ${c.loc}`, hook: `Antes de fechar com um(a) ${c.niche} em ${c.loc}, compare três coisas: resposta, preço claro e avaliações recentes.`, proof: `Olhamos ${c.n} concorrentes da região: ${c.gap}.`, mechanism: `Na ${c.company}, o primeiro retorno sai por ${c.channel}, com horários e valores à vista.`, callToAction: `Chame por ${c.channel} pelo link da bio e veja os horários livres desta semana.`, gap: c.gap },
       { theme: `${c.service}: como funciona na prática`, hook: `Procurando ${c.service} em ${c.loc}? Veja como é o passo a passo.`, proof: `Número de atendimentos de ${c.service} no último mês: ${c.slot}.`, mechanism: `Explicamos cada etapa antes de começar, sem termo técnico desnecessário.`, callToAction: `Clique em agendar no perfil ou ligue para reservar seu horário.`, gap: "Falta de clareza sobre o serviço nos concorrentes" },
       { theme: `Bastidores: como organizamos os horários`, hook: `Horário marcado é horário respeitado.`, proof: `Tempo médio de espera na recepção: ${c.slot}.`, mechanism: `Confirmamos por mensagem um dia antes e reservamos intervalos entre atendimentos.`, callToAction: `Responda este status com QUERO para receber as datas do mês.`, gap: "Reclamações de atraso e fila" },
       { theme: `Dúvida frequente sobre ${c.service2}`, hook: `A pergunta que mais recebemos sobre ${c.service2}: quanto tempo leva e o que muda na rotina?`, proof: `Respondemos a dúvida com base em casos reais: ${c.slot}.`, mechanism: `Resposta curta, em linguagem simples, com o que esperar em cada fase.`, callToAction: `Mande sua dúvida por direct que respondemos hoje.`, gap: "Comunicação difícil e jargão nos concorrentes" },
@@ -93,7 +96,7 @@ const T = {
     channels: ["Instagram", "Google Business Profile", "WhatsApp Status", "Instagram", "LinkedIn"],
     fallbackServices: (niche: string) => [niche, `${niche} service`, `${niche} quote`],
     metaTitle: (c: string, n: string, l: string) => `${c} | ${n} in ${l}`,
-    metaDesc: (c: string, l: string, s: string[]) => `${c} in ${l}: ${s.join(", ")}. Fast replies on WhatsApp.`,
+    metaDesc: (c: string, l: string, s: string[]) => `${c} in ${l}: ${s.join(", ")}.`,
     keywords: (n: string, l: string, s: string) => [
       [`${n} in ${l}`, "commercial", "high"],
       [`${s} ${l}`, "transactional", "high"],
@@ -102,9 +105,10 @@ const T = {
       [`best ${n} in ${l}`, "commercial", "medium"],
     ] as const,
     slot: "[add a real number from your records]",
+    channelSlot: "[your reply channel]",
     gapDefault: "Slow replies on digital channels",
     posts: (c: Ctx) => [
-      { theme: `What to check before choosing ${c.niche} in ${c.loc}`, hook: `Before you pick a ${c.niche} in ${c.loc}, compare three things: reply time, clear pricing and recent reviews.`, proof: `We looked at ${c.n} local competitors: ${c.gap}.`, mechanism: `At ${c.company}, the first reply goes out on WhatsApp, with times and prices up front.`, callToAction: `Message us on WhatsApp from the bio link to see this week's open slots.`, gap: c.gap },
+      { theme: `What to check before choosing ${c.niche} in ${c.loc}`, hook: `Before you pick a ${c.niche} in ${c.loc}, compare three things: reply time, clear pricing and recent reviews.`, proof: `We looked at ${c.n} local competitors: ${c.gap}.`, mechanism: `At ${c.company}, the first reply goes out on ${c.channel}, with times and prices up front.`, callToAction: `Message us on ${c.channel} from the bio link to see this week's open slots.`, gap: c.gap },
       { theme: `${c.service}: how it works in practice`, hook: `Looking for ${c.service} in ${c.loc}? Here is the step-by-step.`, proof: `${c.service} jobs completed last month: ${c.slot}.`, mechanism: `We explain each step before we start, without unnecessary jargon.`, callToAction: `Tap book in the profile or call to reserve your slot.`, gap: "Unclear service descriptions at competitors" },
       { theme: `Behind the scenes: how we schedule`, hook: `A booked time is a respected time.`, proof: `Average wait time at reception: ${c.slot}.`, mechanism: `We confirm by message the day before and leave gaps between appointments.`, callToAction: `Reply to this status with BOOK to get this month's dates.`, gap: "Complaints about delays and queues" },
       { theme: `Common question about ${c.service2}`, hook: `The question we hear most about ${c.service2}: how long does it take and what changes?`, proof: `We answer from real cases: ${c.slot}.`, mechanism: `Short answer, plain language, what to expect at each stage.`, callToAction: `Send your question by DM and we reply today.`, gap: "Hard-to-read communication at competitors" },
@@ -128,7 +132,9 @@ export function generateGrowthPlan(analysis: CompetitiveAnalysis): GrowthPlan {
 
   const ctx: Ctx = {
     company, niche, loc: location, service: services[0], service2: services[1] || services[0],
-    n: competitors.length, gap, slot: t.slot,
+    n: competitors.filter((c) => c.siteReviewed || !c.websiteUrl).length, gap, slot: t.slot,
+    // Only claim WhatsApp when the audit saw it on the site.
+    channel: audit.conversion.hasWhatsApp ? "WhatsApp" : t.channelSlot,
   };
 
   const score = (text: string) => lintAntiSlop(text, locale).slopScore;

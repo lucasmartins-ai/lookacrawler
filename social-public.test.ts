@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   detectSocialPlatform,
+  extractMetaTag,
   lookupSocialProfile,
   parseRedditJson,
   parseShorthandNumber,
@@ -107,5 +108,18 @@ describe("searchRedditIntent (offline, injected fetch)", () => {
 
   test("parseRedditJson tolerates a missing payload", () => {
     expect(parseRedditJson({})).toEqual([]);
+  });
+});
+
+describe("extractMetaTag", () => {
+  test("reads either attribute order and quote style", () => {
+    expect(extractMetaTag(`<meta property="og:title" content="Hi 'x'">`, "og:title")).toBe("Hi 'x'");
+    expect(extractMetaTag(`<meta content='A' name='og:description'/>`, "og:description")).toBe("A");
+  });
+
+  test("stays linear on a hostile page of unclosed meta tags", () => {
+    const start = performance.now();
+    extractMetaTag("<meta ".repeat(40_000) + "x", "og:title");
+    expect(performance.now() - start).toBeLessThan(1000); // was ~18 s before the bounded scan
   });
 });
