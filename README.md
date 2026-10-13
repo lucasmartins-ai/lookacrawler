@@ -54,11 +54,12 @@ Web crawling for Large Language Models (LLMs) is broken by default: modern web p
   - `fast`: Ultra-fast native HTTP GET with backoff. Auto-escalates to `deep` if an anti-bot challenge is encountered.
   - `deep`: Headless Playwright engine launching real Google Chrome with stealth patches (`navigator.webdriver` cleared, WebGL spoofed, CDP leaks stripped) to transparently crawl Cloudflare/Turnstile-protected pages.
 - **Native MCP Ecosystem:**
-  - **Tools:** `extract_web_content`, `crawl_website`, `map_website`, `batch_extract_web_content`, `extract_structured_data`, `extract_contacts`, `search_places`, `discover_local_leads`, `deep_enrich_lead`.
+  - **Tools:** `extract_web_content`, `crawl_website`, `map_website`, `batch_extract_web_content`, `extract_structured_data`, `extract_contacts`, `search_places`, `discover_local_leads`, `deep_enrich_lead`, `lint_anti_slop`, `lookup_social_profile`, `search_social_intent`, `audit_company_website`, `analyze_competitors`, `generate_growth_plan`, `gtm_pipeline_run`.
   - **Resources:** Live telemetry at `crawler://metrics` and cache analytics at `crawler://cache/stats`.
   - **Prompts:** Pre-engineered templates `crawl-and-summarize` and `compare-pages`.
 - **Entity Extraction:** `contacts` pulls emails, phone numbers, WhatsApp links and social profiles; `places` returns structured Google Maps business records with formula-injection-safe CSV output.
 - **B2B Lead Discovery:** `maps` (Google Maps engine) plus `enrich`, which crawls a company's own site for verified emails, socials and decision makers.
+- **GTM Toolkit (no paid APIs):** `audit` (SEO + conversion checklist), `intel` (audit + Maps competitor review + deterministic growth plan), `gtm` (Maps discovery, enrichment, outreach draft written to JSONL/CSV; never sends anything), `antislop` (AI-slop copy linter), `intent` (pt-BR/EN buying-intent scorer), `social-lookup` and `intent-search` (public profile meta tags, Reddit `.json`), `daemon` (Maps scraper web-mode service).
 - **Local SQLite Caching:** Stores extracted Markdown in `crawler_cache.sqlite` to eliminate duplicate network calls.
 - **Structured JSON & Metadata Extraction:** Extracts Open Graph tags (`og:title`, `og:description`), publication dates, canonical URLs, and custom CSS selectors.
 
@@ -138,6 +139,30 @@ bun run cli.ts enrich https://example.com --title "Example Ltd" --mode fast
 
 # Enrich many leads at once from a JSON array of {title, website}
 bun run cli.ts enrich-batch leads.json --concurrency 3 -o enriched.json
+
+# Audit a site: SEO checklist, conversion channels, services, digital maturity
+bun run cli.ts audit https://example.com
+
+# Audit + Maps competitor review + deterministic growth plan (--locale en for English)
+bun run cli.ts intel --site https://example.com --niche "dental clinic" --loc Bristol --limit 3
+
+# Discover -> enrich -> draft outreach copy -> JSONL (or .csv). Draft only, nothing is sent
+bun run cli.ts gtm --niche "dental clinic" --loc Bristol --limit 5 --out leads.jsonl
+
+# Lint copy for AI-slop (argument, --file, or stdin)
+bun run cli.ts antislop "No cenário atual, uma solução revolucionária"
+
+# Score buying intent of a post or comment (generic lexicon; --vertical car for vehicles)
+bun run cli.ts intent "Procuro um sofá até R$ 2.500"
+
+# Public social lookups, no keys: profile meta tags and Reddit search
+bun run cli.ts social-lookup https://www.instagram.com/example/
+bun run cli.ts intent-search "recommend a dentist Goiania" --subreddit goiania
+
+# Run the Maps scraper as a local service (127.0.0.1:8088); `maps`, `gtm` and `intel` use it when up
+bun run cli.ts daemon start
+bun run cli.ts daemon status
+bun run cli.ts daemon stop
 
 # Start MCP Server via SSE on port 3000
 bun run cli.ts serve --transport sse --port 3000

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `audit <url>` / `audit_company_website`: deterministic SEO checklist, conversion
+  channels (WhatsApp, phone, email, booking, form), services and a digital
+  maturity score. No paid API.
+- `intel --site --niche [--loc]` / `analyze_competitors` / `generate_growth_plan`:
+  Maps competitor discovery and review, market gaps, and a niche-driven growth
+  plan (pt-BR default, `--locale en`). Proof lines cite observed data only.
+- `gtm --niche [--loc] [--out file.jsonl|.csv]` / `gtm_pipeline_run`: discover,
+  enrich, draft outreach copy (linted) and write a JSONL or formula-safe CSV
+  sink. Draft only; nothing is sent.
+- `antislop` / `lint_anti_slop`: pt-BR and English AI-slop copy linter.
+- `intent` and `scorePurchaseIntent(text, vertical?)`: buying-intent scorer with
+  a generic pt-BR + EN lexicon and a built-in `car` vertical.
+- `social-lookup` / `lookup_social_profile` and `intent-search` /
+  `search_social_intent`: public profile meta tags and Reddit `.json` search,
+  fetched through the guarded fetch path. No keys, no login.
+- `daemon start|stop|status`: manage the Maps scraper's web mode on 127.0.0.1.
+  `stop` only signals a PID it recorded and only while the port still answers.
+
 ### Fixed
 - `maps` reported a search with no results as a failure ("maps-leads failed:
   inactivity timeout"): that is how the scraper ends an empty search. It is

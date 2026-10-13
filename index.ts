@@ -601,6 +601,168 @@ Extracts verified emails, social media links (Instagram, LinkedIn), decision mak
     }
   );
 
+  const jsonResult = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
+  const failure = (what: string, error: any) => ({
+    isError: true,
+    content: [{ type: "text" as const, text: `${what} failed: ${error?.message || String(error)}` }],
+  });
+
+  server.registerTool(
+    "lint_anti_slop",
+    {
+      description: `Lint copy for AI-slop patterns (throat-clearing openings, hollow buzzwords, "not just X, but Y" antitheses, emoji spam, no concrete numbers). Deterministic, offline, pt-BR and English.
+Returns slopScore (0 = clean), the violations with a suggested fix each, and basic text metrics.`,
+      inputSchema: {
+        text: z.string().min(1).max(50_000).describe("Copy to lint."),
+        language: z.enum(["pt", "en", "auto"]).default("auto").optional().describe("Rule set: 'pt', 'en' or 'auto' (both). Default: auto."),
+      },
+    },
+    async ({ text, language }) => {
+      try {
+        const { lintAntiSlop } = await import("./anti-slop-linter.js");
+        return jsonResult(lintAntiSlop(text, language));
+      } catch (error: any) {
+        return failure("Anti-slop lint", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "lookup_social_profile",
+    {
+      description: `Read a public Instagram, LinkedIn or X/Twitter profile from its OpenGraph meta tags (no login, no API key): name, handle, bio, followers when exposed, and a one-line summary.
+Login-walled pages return only a summary line. Other hosts return platform "unknown". For logged-in access use the CLI 'social' command.`,
+      inputSchema: {
+        url: z.string().url().describe("Profile URL (instagram.com, linkedin.com/company|in, x.com / twitter.com)."),
+      },
+    },
+    async ({ url }) => {
+      try {
+        const { lookupSocialProfile } = await import("./social-public.js");
+        return jsonResult(await lookupSocialProfile(url));
+      } catch (error: any) {
+        return failure("Social profile lookup", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "search_social_intent",
+    {
+      description: `Search Reddit's public .json endpoint (no API key) for buying-intent posts and classify each as recommendation_request, problem_complaint, hiring_service or general_discussion.`,
+      inputSchema: {
+        query: z.string().min(1).max(300).describe("Search query, e.g. 'recommend a dentist Goiania'."),
+        subreddit: z.string().regex(/^[A-Za-z0-9_]{2,21}$/).optional().describe("Restrict the search to one subreddit (name only)."),
+        limit: z.number().int().min(1).max(25).default(5).optional().describe("Maximum posts (default: 5)."),
+      },
+    },
+    async ({ query, subreddit, limit }) => {
+      try {
+        const { searchRedditIntent } = await import("./social-public.js");
+        return jsonResult(await searchRedditIntent(query, { subreddit, limit }));
+      } catch (error: any) {
+        return failure("Social intent search", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "audit_company_website",
+    {
+      description: `Audit a company website: SEO checklist score with the issues found, conversion channels (WhatsApp, phone, email, online booking, contact form), listed services, value proposition and a 0-100 digital-maturity score. Deterministic, no paid API.`,
+      inputSchema: {
+        url: z.string().url().describe("Website to audit."),
+        company_name: z.string().max(200).optional().describe("Company name (default: taken from the page title)."),
+        mode: z.enum(["fast", "deep"]).default("fast").optional().describe("'fast' (HTTP) or 'deep' (headless browser)."),
+      },
+    },
+    async ({ url, company_name, mode }) => {
+      try {
+        await validateTargetUrl(url);
+        const { auditCompanyWebsite } = await import("./competitor-intelligence.js");
+        return jsonResult(await auditCompanyWebsite(url, { companyName: company_name, mode }));
+      } catch (error: any) {
+        return failure("Website audit", error);
+      }
+    }
+  );
+
+  const growthInput = {
+    url: z.string().url().describe("The client's own website."),
+    niche: z.string().min(1).max(200).describe("Business niche, e.g. 'dental clinic'."),
+    location: z.string().max(200).default("").optional().describe("City or region for the competitor search."),
+    company_name: z.string().max(200).optional().describe("Company name override."),
+    max_competitors: z.number().int().min(1).max(10).default(3).optional().describe("Competitors to review (default: 3)."),
+    locale: z.enum(["pt", "en"]).default("pt").optional().describe("Language of the generated text (default: pt)."),
+  };
+  type GrowthArgs = { url: string; niche: string; location?: string; company_name?: string; max_competitors?: number; locale?: "pt" | "en" };
+  const runGrowth = async (a: GrowthArgs) => {
+    await validateTargetUrl(a.url);
+    const { runGrowthEngine } = await import("./growth-planner.js");
+    return runGrowthEngine({
+      websiteUrl: a.url,
+      companyName: a.company_name,
+      niche: a.niche,
+      location: a.location ?? "",
+      maxCompetitors: a.max_competitors,
+      locale: a.locale,
+    });
+  };
+
+  server.registerTool(
+    "analyze_competitors",
+    {
+      description: `Audit the client's site, find local competitors on Google Maps and review each one's site (reputation, online booking, WhatsApp, keywords). Returns the audit, the competitor profiles and the market gaps. Needs the maps-leads scraper.`,
+      inputSchema: growthInput,
+    },
+    async (a) => {
+      try {
+        const { audit, analysis } = await runGrowth(a);
+        return jsonResult({ audit, analysis });
+      } catch (error: any) {
+        return failure("Competitor analysis", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "generate_growth_plan",
+    {
+      description: `Build a deterministic growth plan from the site audit and competitor review: SEO keywords and meta tags, a one-week content plan and an outreach playbook, each piece linted for AI-slop. Proof lines cite only observed data; unknown facts are left as [bracketed] slots. Needs the maps-leads scraper.`,
+      inputSchema: growthInput,
+    },
+    async (a) => {
+      try {
+        return jsonResult((await runGrowth(a)).plan);
+      } catch (error: any) {
+        return failure("Growth plan", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "gtm_pipeline_run",
+    {
+      description: `Run the GTM pipeline: Google Maps discovery for a niche/location, website enrichment (emails, socials, decision makers) and an outreach copy draft per lead, linted for AI-slop. Draft only: nothing is sent or written to disk. Needs the maps-leads scraper.`,
+      inputSchema: {
+        niche: z.string().min(1).max(200).describe("Business niche to search, e.g. 'dental clinic'."),
+        location: z.string().max(200).optional().describe("City or region."),
+        limit: z.number().int().min(1).max(20).default(5).optional().describe("Leads to process (default: 5)."),
+        offer: z.string().max(200).optional().describe("What you offer, in one short phrase, used verbatim in the draft."),
+        locale: z.enum(["pt", "en", "auto"]).default("auto").optional().describe("Draft language; 'auto' follows the lead's country."),
+        mode: z.enum(["fast", "deep"]).default("fast").optional().describe("Enrichment crawl mode."),
+      },
+    },
+    async ({ niche, location, limit, offer, locale, mode }) => {
+      try {
+        const { runGtmPipeline } = await import("./gtm-pipeline.js");
+        return jsonResult(await runGtmPipeline({ niche, location, limit, offer, locale, mode }));
+      } catch (error: any) {
+        return failure("GTM pipeline", error);
+      }
+    }
+  );
+
   /**
    * Register MCP Resources
    */

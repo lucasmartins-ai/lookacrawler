@@ -137,3 +137,22 @@ All extracted HTML MUST undergo the 4-stage token optimization pipeline:
 4. **Memory Hygiene:** Playwright browser contexts must be closed immediately in `finally` blocks.
 5. **Network Safety:** Only public HTTP/HTTPS targets are accepted; redirects are revalidated and response bodies have a configurable size limit.
 6. **Cache Correctness:** Cache keys include URL, mode, selector, schema variant, and pipeline version.
+
+---
+
+## 7. GTM Modules
+
+Layered on the extraction core; none of them adds a network client of its own.
+
+| Module | Role |
+| --- | --- |
+| `competitor-intelligence.ts` | `auditHtml` (SEO checklist, conversion channels, services, maturity via JSDOM and `contacts.ts`), competitor discovery through `maps-bridge.ts`, per-site review. Pages come from `fetchRawHtml`, so the egress guard applies. |
+| `growth-planner.ts` | Deterministic SEO/content/outreach plan from a `CompetitiveAnalysis`; pt-BR or English templates, every item linted by `anti-slop-linter.ts`. |
+| `gtm-pipeline.ts` | `discoverLocalLeads` -> `deepEnrichLead` -> outreach draft -> JSONL / `csv-safe.ts` sink. Draft only. |
+| `social-public.ts` | Public meta-tag profile parsing and Reddit `.json` search via `fetchHtml`. Complements `social.ts`, which drives the logged-in browser bridge. |
+| `purchase-intent.ts` | Regex lexicons (`generic`, `car`) for buyer / price-question / seller classification. |
+| `maps-daemon.ts` | Start/stop/status of `maps-leads serve -addr 127.0.0.1:<port>`; state file under `os.tmpdir()`. `maps-bridge.ts` already prefers a live daemon. |
+
+Entry points: CLI commands in `cli.ts`, MCP tools in `index.ts`. The daemon and
+file sinks are CLI-only on purpose (an MCP client should not spawn processes or
+write files).

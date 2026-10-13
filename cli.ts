@@ -27,6 +27,16 @@ Commands:
   enrich-batch <file>         Enrich every website listed in a JSON file ({title, website}[]).
   social <sub> ...            Read/write Facebook & Instagram through the logged-in
                               Antigravity browser bridge (127.0.0.1:8765).
+  audit <url>                 SEO / conversion audit of a site (no API keys).
+  intel --site <url> --niche <n> [--loc <l>]
+                              Audit + Maps competitor review + deterministic growth plan.
+  gtm --niche <n> [--loc <l>] Maps discovery -> enrichment -> outreach draft -> JSONL/CSV file.
+                              Draft only; nothing is sent.
+  antislop "<text>"           Lint copy for AI-slop patterns (also --file <path> or stdin).
+  intent "<text>"             Score buying intent of a post/comment (pt-BR + EN).
+  social-lookup <url>         Public profile meta tags (Instagram, LinkedIn, X); no login.
+  intent-search "<query>"     Reddit buying-intent search (public .json, no key).
+  daemon <start|stop|status>  Manage the Maps scraper web-mode daemon (127.0.0.1 only).
   serve                       Start the MCP server (stdio or SSE HTTP transport).
   --help, -h                  Show this help text.
   --version, -v               Show version number.
@@ -70,6 +80,42 @@ Subcommands for 'social':
   --live                      Actually publish (ig-comment). Default: dry run.
   --limit <n>                 Maximum rows.
   --output, -o <file>         Write JSON output to a file.
+
+Options for 'audit':
+  --name <company>            Company name (default: taken from <title>).
+  --mode <fast|deep>          Fetch mode (default: fast).
+  --output, -o <file>         Write JSON output to a file.
+
+Options for 'intel':
+  --site <url>                Your (or your client's) website. Required.
+  --niche <text>              Business niche, e.g. "dental clinic". Required.
+  --loc <text>                Location for the competitor search.
+  --limit <n>                 Competitors to review (default: 3).
+  --locale <pt|en>            Language of the plan (default: pt).
+  --name <company>            Company name override.
+  --output, -o <file>         Write JSON output to a file.
+
+Options for 'gtm':
+  --niche <text>              Business niche to search. Required.
+  --loc <text>                Location.
+  --limit <n>                 Leads to process (default: 5).
+  --offer <text>              What you offer, in one phrase, used in the draft.
+  --locale <pt|en|auto>       Draft language (default: auto, from the lead's country).
+  --mode <fast|deep>          Enrichment crawl mode (default: fast).
+  --out <file>                Sink: .csv (formula-safe) or anything else as JSONL.
+
+Options for 'antislop' / 'intent':
+  --file <path>               Read the text from a file (otherwise args, then stdin).
+  --lang <pt|en|auto>         antislop language rules (default: auto).
+  --vertical <name>           intent lexicon: generic (default) or car.
+  --region <a,b>              intent: places that raise the score when mentioned.
+
+Options for 'intent-search':
+  --subreddit <name>          Restrict to one subreddit.
+  --limit <n>                 Maximum posts (default: 5, max 25).
+
+Options for 'daemon':
+  --port <n>                  Daemon port (default: 8088).
 
 Options for 'places':
   --limit <n>                 Maximum places to return (default: 5).
@@ -117,6 +163,9 @@ Examples:
   lookacrawler crawl https://example.com --max-depth 2 --max-pages 10 --link-format references
   lookacrawler batch https://example.com https://news.ycombinator.com --concurrency 2
   lookacrawler structured https://example.com --schema '{"title":"h1","link":"a"}'
+  lookacrawler audit https://example.com
+  lookacrawler antislop "Vamos mergulhar no cenário atual"
+  lookacrawler gtm --niche "dental clinic" --loc Goiania --limit 5 --out leads.jsonl
   lookacrawler serve --transport sse --port 3000
 `);
 }
@@ -587,6 +636,152 @@ async function runCli() {
     return;
   }
 
+  if (command === "antislop" || command === "intent") {
+    const text = (positionalUrls.join(" ") || (await readTextInput(args))).trim();
+    if (!text) {
+      console.error(`Error: Missing text for '${command}' (pass it as an argument, --file <path>, or on stdin).`);
+      process.exit(1);
+    }
+    try {
+      if (command === "antislop") {
+        const lang = getOption(args, "--lang") || "auto";
+        if (lang !== "pt" && lang !== "en" && lang !== "auto") throw new Error("--lang must be pt, en or auto");
+        const { lintAntiSlop } = await import("./anti-slop-linter.js");
+        console.log(JSON.stringify(lintAntiSlop(text, lang), null, 2));
+      } else {
+        const { scorePurchaseIntent } = await import("./purchase-intent.js");
+        const regions = (getOption(args, "--region") || "").split(",").map((r) => r.trim()).filter(Boolean);
+        console.log(JSON.stringify(scorePurchaseIntent(text, getOption(args, "--vertical"), regions), null, 2));
+      }
+    } catch (err: any) {
+      console.error(`${command} error: ${err.message || err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === "social-lookup" || command === "intent-search") {
+    const input = positionalUrls.join(" ");
+    if (!input) {
+      console.error(`Error: Missing ${command === "social-lookup" ? "profile URL" : "query"} for '${command}' command.`);
+      process.exit(1);
+    }
+    try {
+      const pub = await import("./social-public.js");
+      const result = command === "social-lookup"
+        ? await pub.lookupSocialProfile(input)
+        : await pub.searchRedditIntent(input, {
+            subreddit: getOption(args, "--subreddit"),
+            limit: Number(getOption(args, "--limit")) || undefined,
+          });
+      await emitJson(args, result, "Social output");
+    } catch (err: any) {
+      console.error(`${command} error: ${err.message || err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === "daemon") {
+    const { getMapsDaemonStatus, startMapsDaemon, stopMapsDaemon } = await import("./maps-daemon.js");
+    const sub = positionalUrls[0];
+    const port = parseInt(getOption(args, "--port") || "8088", 10);
+    if (!["start", "stop", "status"].includes(sub) || !(port > 0 && port < 65536)) {
+      console.error("Error: usage: lookacrawler daemon <start|stop|status> [--port <n>]");
+      process.exit(1);
+    }
+    try {
+      if (sub === "start") console.log(JSON.stringify(await startMapsDaemon({ port }), null, 2));
+      else if (sub === "stop") {
+        const res = await stopMapsDaemon(port);
+        console.log(JSON.stringify(res, null, 2));
+        if (!res.stopped) process.exit(1);
+      } else console.log(JSON.stringify(await getMapsDaemonStatus(port), null, 2));
+    } catch (err: any) {
+      console.error(`Daemon error: ${err.message || err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === "audit") {
+    if (positionalUrls.length === 0) {
+      console.error("Error: Missing target URL for 'audit' command.");
+      process.exit(1);
+    }
+    try {
+      const { validateTargetUrl } = await import("./security.js");
+      const { auditCompanyWebsite } = await import("./competitor-intelligence.js");
+      await validateTargetUrl(positionalUrls[0]);
+      const audit = await auditCompanyWebsite(positionalUrls[0], {
+        companyName: getOption(args, "--name"),
+        mode: getOption(args, "--mode") === "deep" ? "deep" : "fast",
+      });
+      await emitJson(args, audit, "Audit");
+    } catch (err: any) {
+      console.error(`Audit error: ${err.message || err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === "intel") {
+    const site = getOption(args, "--site");
+    const niche = getOption(args, "--niche");
+    if (!site || !niche) {
+      console.error("Error: usage: lookacrawler intel --site <url> --niche <niche> [--loc <location>] [--limit <n>] [--locale pt|en]");
+      process.exit(1);
+    }
+    try {
+      const { runGrowthEngine } = await import("./growth-planner.js");
+      const locale = getOption(args, "--locale") === "en" ? "en" : "pt";
+      const result = await runGrowthEngine({
+        websiteUrl: site,
+        companyName: getOption(args, "--name"),
+        niche,
+        location: getOption(args, "--loc") || "",
+        maxCompetitors: Number(getOption(args, "--limit")) || 3,
+        locale,
+      });
+      await emitJson(args, result, "Intel");
+    } catch (err: any) {
+      console.error(`Intel error: ${err.message || err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (command === "gtm") {
+    const niche = getOption(args, "--niche");
+    if (!niche) {
+      console.error("Error: usage: lookacrawler gtm --niche <niche> [--loc <location>] [--limit <n>] [--out <file.jsonl|.csv>]");
+      process.exit(1);
+    }
+    const localeArg = getOption(args, "--locale");
+    try {
+      const { runGtmPipeline, writeGtmSink } = await import("./gtm-pipeline.js");
+      const result = await runGtmPipeline({
+        niche,
+        location: getOption(args, "--loc"),
+        limit: Number(getOption(args, "--limit")) || 5,
+        offer: getOption(args, "--offer"),
+        locale: localeArg === "pt" || localeArg === "en" ? localeArg : "auto",
+        mode: getOption(args, "--mode") === "deep" ? "deep" : "fast",
+      });
+      const sink = getOption(args, "--out");
+      if (sink) {
+        await writeGtmSink(sink, result.items);
+        console.log(`GTM: ${result.items.length} of ${result.totalDiscovered} leads drafted (${result.totalEnriched} enriched). Saved to ${sink}`);
+      } else {
+        console.log(JSON.stringify(result, null, 2));
+      }
+    } catch (err: any) {
+      console.error(`GTM error: ${err.message || err}`);
+      process.exit(1);
+    }
+    return;
+  }
+
   console.error(`Unknown command: ${command}. Use --help for usage details.`);
   process.exit(1);
 }
@@ -616,6 +811,17 @@ function getPositionalArgs(args: string[], command: string): string[] {
     "--lang",
     "--limit",
     "--title",
+    "--file",
+    "--vertical",
+    "--region",
+    "--site",
+    "--niche",
+    "--loc",
+    "--out",
+    "--offer",
+    "--locale",
+    "--name",
+    "--subreddit",
   ]);
 
   const positional: string[] = [];
@@ -634,6 +840,25 @@ function getPositionalArgs(args: string[], command: string): string[] {
     positional.push(arg);
   }
   return positional;
+}
+
+/** Text for antislop/intent when it was not given as an argument: --file, else piped stdin. */
+async function readTextInput(args: string[]): Promise<string> {
+  const file = getOption(args, "--file");
+  if (file) return readFile(file, "utf8");
+  return process.stdin.isTTY ? "" : Bun.stdin.text();
+}
+
+/** JSON to --output/-o when given, otherwise stdout. */
+async function emitJson(args: string[], value: unknown, label: string): Promise<void> {
+  const json = JSON.stringify(value, null, 2);
+  const outputFile = getOption(args, "--output") || getOption(args, "-o");
+  if (outputFile) {
+    await writeFile(outputFile, json, "utf8");
+    console.log(`${label} saved to ${outputFile}`);
+  } else {
+    console.log(json);
+  }
 }
 
 function getOption(args: string[], flag: string): string | undefined {
