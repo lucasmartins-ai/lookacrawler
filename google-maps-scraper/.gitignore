@@ -1,0 +1,42 @@
+# Build artifacts
+bin/
+build/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage*
+
+# Runtime data and secrets
+webdata/
+data/
+dados/
+cache/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.csv
+*.jsonl
+*.partial
+*.tmp
+.env
+.env.*
+!.env.example
+**/*.key
+**/*.pem
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.orig
+*.rej
+*.bak
+__pycache__/

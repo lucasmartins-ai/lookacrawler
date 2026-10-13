@@ -2,3 +2,12 @@ node_modules
 dist
 crawler_cache.sqlite*
 *.sqlite*
+google-maps-scraper/maps-leads
+google-maps-scraper/maps-leads.exe
+google-maps-scraper/MapsLeads.exe
+google-maps-scraper/webdata/
+google-maps-scraper/dados/
+.env
+.env.*
+!.env.example
+.DS_Store

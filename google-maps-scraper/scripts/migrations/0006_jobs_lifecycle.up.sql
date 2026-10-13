@@ -1,0 +1,14 @@
+BEGIN;
+ALTER TABLE gmaps_jobs RENAME COLUMN updated_at TO updated_at_legacy;
+ALTER TABLE gmaps_jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP;
+UPDATE gmaps_jobs SET updated_at=COALESCE(updated_at_legacy,created_at,CURRENT_TIMESTAMP);
+ALTER TABLE gmaps_jobs DROP COLUMN IF EXISTS updated_at_legacy;
+ALTER TABLE gmaps_jobs ADD COLUMN IF NOT EXISTS max_attempts INT NOT NULL DEFAULT 3;
+ALTER TABLE gmaps_jobs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE gmaps_jobs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE gmaps_jobs ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
+UPDATE gmaps_jobs SET status='queued' WHERE status IN ('new','queued');
+UPDATE gmaps_jobs SET status='running' WHERE status='working';
+CREATE INDEX IF NOT EXISTS idx_gmaps_jobs_claim ON gmaps_jobs(status,priority,created_at);
+CREATE INDEX IF NOT EXISTS idx_gmaps_jobs_lease ON gmaps_jobs(status,lease_expires_at);
+COMMIT;

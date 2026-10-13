@@ -97,10 +97,11 @@ export function resolveMapsLeadsBinary(customPath?: string): string | null {
     return process.env.MAPS_LEADS_BIN;
   }
 
-  // ponytail: no install step for a sibling binary. Add a `npx`-style fetch when
-  // the scraper ships as a real npm package; until then MAPS_LEADS_BIN wins.
+  // ponytail: build the vendored scraper with `bun run build:maps`; a
+  // prebuilt-binary download can come later. MAPS_LEADS_BIN still wins.
   const binaryName = process.platform === "win32" ? "maps-leads.exe" : "maps-leads";
   const candidates = [
+    path.resolve(__dirname, "google-maps-scraper", binaryName),
     path.resolve(__dirname, "../google-maps-scraper", binaryName),
     path.resolve(__dirname, "../../google-maps-scraper", binaryName),
     path.resolve(process.cwd(), "google-maps-scraper", binaryName),

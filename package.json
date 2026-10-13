@@ -13,6 +13,7 @@
     "cli": "bun run cli.ts",
     "serve": "bun run index.ts --transport sse",
     "build": "bun build index.ts --target bun --external playwright --external playwright-core --outdir ./dist",
+    "build:maps": "cd google-maps-scraper && go build -o maps-leads .",
     "test": "bun test"
   },
   "dependencies": {

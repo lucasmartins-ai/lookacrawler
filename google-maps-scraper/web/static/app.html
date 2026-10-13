@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#101828" />
+    <meta
+      name="description"
+      content="Encontre empresas locais e organize contatos em poucos passos."
+    />
+    <title>Maps Leads</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#conteudo">Ir para o conteúdo</a>
+
+    <header class="site-header">
+      <div class="header-inner">
+        <button
+          class="brand"
+          type="button"
+          data-view="dashboard"
+          aria-label="Ir para o início"
+        >
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <path
+                d="M16 3.5a9 9 0 0 0-9 9c0 6.7 9 16 9 16s9-9.3 9-16a9 9 0 0 0-9-9Z"
+              />
+              <circle cx="16" cy="12.5" r="3.5" />
+            </svg>
+          </span>
+          <span
+            ><strong>Maps Leads</strong><small>Prospecção local</small></span
+          >
+        </button>
+        <div class="header-actions">
+          <button
+            id="theme-toggle"
+            class="theme-toggle"
+            type="button"
+            aria-label="Ativar tema escuro"
+            title="Mudar aparência"
+          >
+            <svg
+              class="theme-icon-light"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"
+              />
+            </svg>
+            <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z"
+              />
+            </svg>
+          </button>
+          <nav class="main-nav" aria-label="Navegação principal">
+            <button
+              type="button"
+              data-view="dashboard"
+              data-nav="dashboard"
+              class="active"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-8Z"
+                />
+              </svg>
+              <span>Minhas buscas</span>
+            </button>
+            <button
+              type="button"
+              data-view="new"
+              data-nav="new"
+              class="nav-primary"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              <span>Nova busca</span>
+            </button>
+          </nav>
+        </div>
+      </div>
+    </header>
+
+    <main id="conteudo" tabindex="-1">
+      <section id="dashboard" class="view" aria-labelledby="dashboard-title">
+        <div class="dashboard-hero">
+          <div class="hero-copy">
+            <span class="kicker">Visão geral</span>
+            <h1 id="dashboard-title">
+              Transforme buscas locais em oportunidades.
+            </h1>
+            <p>
+              Encontre empresas, organize contatos e baixe seus resultados sem
+              configurações complicadas.
+            </p>
+            <button
+              class="button button-primary button-large"
+              type="button"
+              data-view="new"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              Criar nova busca
+            </button>
+          </div>
+          <div class="hero-visual" aria-hidden="true">
+            <div class="map-orbit orbit-one"></div>
+            <div class="map-orbit orbit-two"></div>
+            <div class="pin pin-main"><span></span></div>
+            <div class="pin pin-small pin-a"><span></span></div>
+            <div class="pin pin-small pin-b"><span></span></div>
+            <div class="lead-popover">
+              <span class="lead-avatar">M</span
+              ><span
+                ><strong>Empresa encontrada</strong
+                ><small>Contato disponível</small></span
+              ><b>✓</b>
+            </div>
+          </div>
+        </div>
+
+        <div id="summary" class="metric-grid" aria-live="polite">
+          <div class="metric-card skeleton"></div>
+          <div class="metric-card skeleton"></div>
+          <div class="metric-card skeleton"></div>
+          <div class="metric-card skeleton"></div>
+        </div>
+
+        <section
+          class="content-card searches-section"
+          aria-labelledby="searches-title"
+        >
+          <div class="section-heading">
+            <div>
+              <span class="section-kicker">Histórico</span>
+              <h2 id="searches-title">Suas buscas</h2>
+            </div>
+            <div class="section-tools">
+              <label class="select-control">
+                <span class="sr-only">Filtrar por situação</span>
+                <select id="status-filter">
+                  <option value="">Todas as situações</option>
+                  <option value="running">Em andamento</option>
+                  <option value="queued">Aguardando</option>
+                  <option value="succeeded">Concluídas</option>
+                  <option value="failed">Com erro</option>
+                  <option value="timed_out">Tempo encerrado</option>
+                  <option value="interrupted">Interrompidas</option>
+                  <option value="worker_lost">
+                    Interrompidas pelo sistema
+                  </option>
+                  <option value="canceled">Canceladas</option>
+                </select>
+              </label>
+              <button
+                id="refresh"
+                class="icon-button"
+                type="button"
+                title="Atualizar"
+                aria-label="Atualizar buscas"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M20 7v5h-5M4 17v-5h5M18.5 9A7 7 0 0 0 6 7l-2 5M5.5 15A7 7 0 0 0 18 17l2-5"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div
+            id="jobs"
+            class="search-list"
+            aria-live="polite"
+            aria-busy="true"
+          ></div>
+          <div id="campaign-pager" class="pagination hidden">
+            <button id="prev-page" type="button">← Anterior</button>
+            <span id="page-label"></span>
+            <button id="next-page" type="button">Próxima →</button>
+          </div>
+        </section>
+      </section>
+
+      <section id="new" class="view hidden" aria-labelledby="new-title">
+        <div class="page-heading compact-heading">
+          <button type="button" class="back-link" data-view="dashboard">
+            ← Minhas buscas
+          </button>
+          <span class="kicker">Nova prospecção</span>
+          <h1 id="new-title">O que você quer encontrar?</h1>
+          <p>
+            Informe o tipo de negócio e o local. O restante fica por nossa
+            conta.
+          </p>
+        </div>
+
+        <div class="creation-layout">
+          <form id="job-form" class="content-card creation-form" novalidate>
+            <div class="form-block">
+              <div class="form-block-number">1</div>
+              <div class="form-block-content">
+                <label class="field-label" for="keywords"
+                  >Tipo de empresa ou serviço</label
+                >
+                <p class="field-help">
+                  Você pode buscar mais de um tipo, usando uma linha para cada
+                  termo.
+                </p>
+                <textarea
+                  id="keywords"
+                  name="keywords"
+                  required
+                  rows="4"
+                  maxlength="30000"
+                  placeholder="Ex.:&#10;Clínicas odontológicas&#10;Laboratórios de prótese"
+                ></textarea>
+                <div class="input-footer">
+                  <span>Até 100 termos</span
+                  ><span id="keyword-count">0 termos</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-divider"></div>
+
+            <div class="form-block">
+              <div class="form-block-number">2</div>
+              <div class="form-block-content">
+                <label class="field-label" for="location"
+                  >Cidade, bairro ou região</label
+                >
+                <p class="field-help">
+                  Digite normalmente. Você não precisa descobrir latitude ou
+                  longitude.
+                </p>
+                <div class="location-field">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M12 21s7-6.1 7-12A7 7 0 0 0 5 9c0 5.9 7 12 7 12Z"
+                    />
+                    <circle cx="12" cy="9" r="2.5" />
+                  </svg>
+                  <input
+                    id="location"
+                    name="location"
+                    type="text"
+                    required
+                    autocomplete="off"
+                    maxlength="200"
+                    placeholder="Ex.: Uberlândia, Minas Gerais"
+                    aria-controls="location-results"
+                  />
+                  <span
+                    id="location-spinner"
+                    class="mini-spinner hidden"
+                    aria-hidden="true"
+                  ></span>
+                </div>
+                <div
+                  id="location-selected"
+                  class="location-selected hidden"
+                  aria-live="polite"
+                ></div>
+                <div
+                  id="location-results"
+                  class="location-results hidden"
+                  role="group"
+                  aria-label="Locais encontrados"
+                ></div>
+                <input name="lat" type="hidden" /><input
+                  name="lon"
+                  type="hidden"
+                />
+                <p class="provider-note">
+                  Sugestões de local fornecidas por
+                  <a
+                    href="https://www.openstreetmap.org/copyright"
+                    target="_blank"
+                    rel="noreferrer"
+                    >OpenStreetMap</a
+                  >
+                  e Photon, com contingência do
+                  <a
+                    href="https://open-meteo.com/en/docs/geocoding-api"
+                    target="_blank"
+                    rel="noreferrer"
+                    >GeoNames via Open-Meteo</a
+                  >.
+                </p>
+              </div>
+            </div>
+
+            <div class="form-divider"></div>
+
+            <div class="form-block">
+              <div class="form-block-number">3</div>
+              <div class="form-block-content">
+                <div class="field-row">
+                  <label
+                    ><span class="field-label">Distância da busca</span
+                    ><select name="radius">
+                      <option value="5000">Até 5 km</option>
+                      <option value="10000" selected>Até 10 km</option>
+                      <option value="25000">Até 25 km</option>
+                      <option value="50000">Até 50 km</option>
+                    </select></label
+                  >
+                  <label
+                    ><span class="field-label">Nível de busca</span
+                    ><select name="depth">
+                      <option value="10">Rápida</option>
+                      <option value="25" selected>Equilibrada</option>
+                      <option value="50">Mais completa</option>
+                    </select></label
+                  >
+                </div>
+                <details class="advanced-options">
+                  <summary>
+                    Opções adicionais <span>Configuração opcional</span>
+                  </summary>
+                  <div class="advanced-body">
+                    <label class="switch-row"
+                      ><span
+                        ><strong>Buscar e-mails públicos</strong
+                        ><small
+                          >Procura e-mails publicados nos sites das
+                          empresas.</small
+                        ></span
+                      ><input name="email" type="checkbox" /><i
+                        aria-hidden="true"
+                      ></i
+                    ></label>
+                    <label class="switch-row"
+                      ><span
+                        ><strong>Coletar avaliações adicionais</strong
+                        ><small
+                          >A busca pode demorar mais para terminar.</small
+                        ></span
+                      ><input name="extra_reviews" type="checkbox" /><i
+                        aria-hidden="true"
+                      ></i
+                    ></label>
+                    <label class="name-field"
+                      ><span class="field-label"
+                        >Nome da busca <small>(opcional)</small></span
+                      ><input
+                        name="name"
+                        type="text"
+                        maxlength="120"
+                        placeholder="Criado automaticamente se ficar vazio"
+                    /></label>
+                    <div class="template-tools">
+                      <label
+                        ><span class="field-label">Usar configuração salva</span
+                        ><select id="template-select">
+                          <option value="">Nenhuma</option>
+                        </select></label
+                      >
+                      <button
+                        id="load-template"
+                        type="button"
+                        class="button button-secondary"
+                      >
+                        Aplicar
+                      </button>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </div>
+
+            <div class="mobile-submit">
+              <button
+                id="create-job-mobile"
+                class="button button-primary button-large"
+                type="submit"
+              >
+                Iniciar busca
+              </button>
+            </div>
+          </form>
+
+          <aside class="creation-summary" aria-label="Resumo da busca">
+            <div class="summary-card">
+              <span class="summary-icon"
+                ><svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M3 11.5 12 4l9 7.5v8a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-8Z"
+                  /></svg
+              ></span>
+              <h2>Resumo da busca</h2>
+              <dl id="search-review">
+                <div>
+                  <dt>O que procurar</dt>
+                  <dd id="review-keywords">Ainda não informado</dd>
+                </div>
+                <div>
+                  <dt>Onde procurar</dt>
+                  <dd id="review-location">Ainda não informado</dd>
+                </div>
+                <div>
+                  <dt>Alcance</dt>
+                  <dd id="review-radius">Até 10 km</dd>
+                </div>
+              </dl>
+              <div id="estimate" class="estimate-box">
+                <span class="estimate-dot"></span
+                ><span>Preencha os campos para iniciar.</span>
+              </div>
+              <button
+                id="create-job"
+                class="button button-primary button-large button-full"
+                type="submit"
+                form="job-form"
+              >
+                <span>Iniciar busca</span
+                ><svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </button>
+              <p class="privacy-note">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M7 10V8a5 5 0 0 1 10 0v2M5 10h14v10H5z" /></svg
+                >Seus dados permanecem nesta instalação.
+              </p>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="detail" class="view hidden" aria-live="polite">
+        <div id="job-detail"></div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Maps Leads</span
+      ><span>Interface local · seus dados permanecem com você</span>
+    </footer>
+
+    <div id="toast" role="status" aria-live="polite">
+      <span id="toast-icon">✓</span><span id="toast-text"></span>
+    </div>
+
+    <dialog id="confirm-dialog">
+      <form method="dialog">
+        <span class="dialog-icon"
+          ><svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M12 9v4m0 4h.01M10.3 4.2 2.6 18a1.5 1.5 0 0 0 1.3 2.2h16.2a1.5 1.5 0 0 0 1.3-2.2L13.7 4.2a2 2 0 0 0-3.4 0Z"
+            /></svg
+        ></span>
+        <h2 id="confirm-title">Excluir esta busca?</h2>
+        <p id="confirm-message">
+          Os resultados também serão removidos desta instalação.
+        </p>
+        <div class="dialog-actions">
+          <button type="submit" value="cancel" class="button button-secondary">
+            Manter busca</button
+          ><button type="submit" value="confirm" class="button button-danger">
+            Sim, excluir
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

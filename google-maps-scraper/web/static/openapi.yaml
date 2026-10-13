@@ -1,0 +1,380 @@
+openapi: 3.1.0
+info:
+  title: API local do Maps Leads
+  version: 2.2.0
+  description: API da instalação local, sem login ou token. Não deve ser exposta diretamente na internet.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://127.0.0.1:8080
+security: []
+tags:
+  - name: System
+    description: Estado e recursos auxiliares da instalação.
+  - name: Campaigns
+    description: Criação e acompanhamento das buscas.
+  - name: Results
+    description: Consulta, filtros e download dos resultados.
+  - name: Templates
+    description: Configurações de busca salvas.
+paths:
+  /healthz:
+    get:
+      tags: [System]
+      security: []
+      summary: Liveness
+      responses: { "200": { description: Healthy } }
+  /readyz:
+    get:
+      tags: [System]
+      security: []
+      summary: Readiness
+      responses:
+        {
+          "200": { description: Ready },
+          "503": { $ref: "#/components/responses/Error" },
+        }
+  /api/v1/capabilities:
+    get:
+      tags: [System]
+      summary: Capacidades ativas
+      responses: { "200": { description: Capabilities } }
+  /api/v1/metrics:
+    get:
+      tags: [System]
+      summary: Métricas locais agregadas
+      responses: { "200": { description: Metrics } }
+  /api/v1/estimate:
+    post:
+      tags: [Campaigns]
+      summary: Estima custo e duração
+      requestBody: { $ref: "#/components/requestBodies/JobData" }
+      responses:
+        {
+          "200": { description: Estimate },
+          "400": { $ref: "#/components/responses/Error" },
+        }
+  /api/v1/jobs:
+    get:
+      tags: [Campaigns]
+      summary: Lista campanhas paginadas
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+        - { name: status, in: query, schema: { type: string } }
+      responses: { "200": { description: Campaign list } }
+    post:
+      tags: [Campaigns]
+      summary: Cria campanha
+      parameters:
+        - {
+            name: Idempotency-Key,
+            in: header,
+            schema: { type: string, maxLength: 200 },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [data]
+              properties:
+                name: { type: string, maxLength: 120 }
+                data: { $ref: "#/components/schemas/JobData" }
+      responses:
+        {
+          "200": { description: Existing idempotent response },
+          "201": { description: Created },
+          "400": { $ref: "#/components/responses/Error" },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /api/v1/jobs/{id}:
+    parameters: [{ $ref: "#/components/parameters/ID" }]
+    get:
+      tags: [Campaigns]
+      summary: Obtém campanha
+      responses:
+        {
+          "200": { description: Campaign },
+          "404": { $ref: "#/components/responses/Error" },
+        }
+    delete:
+      tags: [Campaigns]
+      summary: Exclui campanha e artefatos
+      responses:
+        {
+          "200": { description: Deleted },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /api/v1/jobs/{id}/cancel:
+    post:
+      tags: [Campaigns]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      summary: Solicita cancelamento
+      responses:
+        {
+          "200": { description: Cancellation requested },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /api/v1/jobs/{id}/retry:
+    post:
+      tags: [Campaigns]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      summary: Reagenda campanha terminal
+      responses:
+        {
+          "200": { description: Retried },
+          "409": { $ref: "#/components/responses/Error" },
+        }
+  /api/v1/jobs/{id}/clone:
+    post:
+      tags: [Campaigns]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      summary: Clona campanha
+      responses: { "201": { description: Cloned } }
+  /api/v1/jobs/{id}/events:
+    get:
+      tags: [Campaigns]
+      parameters:
+        - { $ref: "#/components/parameters/ID" }
+        - { name: stream, in: query, schema: { type: boolean, default: false } }
+      summary: Lista eventos ou abre SSE
+      responses: { "200": { description: Events or text/event-stream } }
+  /api/v1/jobs/{id}/results:
+    get:
+      tags: [Results]
+      parameters:
+        - { $ref: "#/components/parameters/ID" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - {
+            name: min_rating,
+            in: query,
+            schema: { type: number, minimum: 0, maximum: 5 },
+          }
+        - { name: has_phone, in: query, schema: { type: boolean } }
+        - { name: has_website, in: query, schema: { type: boolean } }
+        - { name: has_instagram, in: query, schema: { type: boolean } }
+        - { name: has_email, in: query, schema: { type: boolean } }
+      summary: Resultados filtrados e paginados
+      responses:
+        {
+          "200": { description: Result page },
+          "404": { $ref: "#/components/responses/Error" },
+        }
+  /api/v1/jobs/{id}/stats:
+    get:
+      tags: [Results]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      summary: Estatísticas da campanha
+      responses: { "200": { description: Statistics } }
+  /api/v1/jobs/{id}/recommendations:
+    get:
+      tags: [Results]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      summary: Recomendações derivadas dos resultados
+      responses: { "200": { description: Recommendations } }
+  /api/v1/jobs/{id}/download:
+    get:
+      tags: [Results]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      summary: Baixa CSV final ou parcial
+      responses: { "200": { description: CSV file } }
+  /api/v1/jobs/{id}/exports:
+    get:
+      tags: [Results]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      summary: Histórico de exportações
+      responses: { "200": { description: Export list } }
+    post:
+      tags: [Results]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      summary: Cria exportação filtrada
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResultFilter" }
+      responses: { "201": { description: Export created } }
+  /api/v1/jobs/{id}/exports/{exportID}/download:
+    get:
+      tags: [Results]
+      parameters:
+        - { $ref: "#/components/parameters/ID" }
+        - { name: exportID, in: path, required: true, schema: { type: string } }
+      summary: Baixa exportação registrada
+      responses:
+        {
+          "200": { description: CSV file },
+          "404": { $ref: "#/components/responses/Error" },
+        }
+  /api/v1/templates:
+    get:
+      tags: [Templates]
+      summary: Lista modelos
+      responses: { "200": { description: Templates } }
+    post:
+      tags: [Templates]
+      summary: Salva modelo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, data]
+              properties:
+                id: { type: string }
+                name: { type: string, maxLength: 120 }
+                data: { $ref: "#/components/schemas/JobData" }
+      responses: { "201": { description: Saved } }
+  /api/v1/templates/{id}:
+    delete:
+      tags: [Templates]
+      parameters: [{ $ref: "#/components/parameters/ID" }]
+      summary: Exclui modelo
+      responses: { "200": { description: Deleted } }
+  /api/v1/retention/run:
+    post:
+      tags: [System]
+      summary: Executa retenção configurada
+      responses: { "200": { description: Retention result } }
+  /api/v1/geocode:
+    get:
+      tags: [System]
+      summary: Geocodificação pública protegida contra SSRF
+      parameters:
+        [
+          {
+            name: q,
+            in: query,
+            required: true,
+            schema: { type: string, maxLength: 200 },
+          },
+        ]
+      responses: { "200": { description: Geocode candidates } }
+  /api/v1/proxies/test:
+    post:
+      tags: [System]
+      summary: Testa conectividade real de um proxy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [url]
+              properties: { url: { type: string, format: uri } }
+      responses:
+        {
+          "200": { description: Test result },
+          "400": { $ref: "#/components/responses/Error" },
+        }
+components:
+  parameters:
+    ID:
+      {
+        name: id,
+        in: path,
+        required: true,
+        schema: { type: string, minLength: 1, maxLength: 128 },
+      }
+    Limit:
+      {
+        name: limit,
+        in: query,
+        schema: { type: integer, minimum: 1, maximum: 200, default: 50 },
+      }
+    Offset:
+      {
+        name: offset,
+        in: query,
+        schema: { type: integer, minimum: 0, default: 0 },
+      }
+  requestBodies:
+    JobData:
+      required: true
+      content:
+        {
+          application/json:
+            { schema: { $ref: "#/components/schemas/JobData" } },
+        }
+  responses:
+    Error:
+      description: Structured error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        request_id: { type: string }
+    JobData:
+      type: object
+      additionalProperties: false
+      required: [keywords]
+      properties:
+        keywords:
+          {
+            type: array,
+            minItems: 1,
+            maxItems: 100,
+            items: { type: string, maxLength: 300 },
+          }
+        location:
+          {
+            type: string,
+            maxLength: 240,
+            description: Nome legível do local escolhido pelo usuário,
+          }
+        lang: { type: string, minLength: 2, maxLength: 12, default: pt-BR }
+        zoom: { type: integer, minimum: 1, maximum: 21, default: 15 }
+        lat: { type: string }
+        lon: { type: string }
+        fast_mode:
+          type: boolean
+          description: >-
+            Usa coordenadas quando disponíveis; quando falso, pesquisa pelo
+            nome legível do local.
+        radius: { type: integer, minimum: 0, maximum: 500000, default: 10000 }
+        depth: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        email: { type: boolean }
+        extra_reviews: { type: boolean }
+        max_time_minutes:
+          {
+            type: integer,
+            description: Maximum execution time in minutes,
+            minimum: 1,
+            maximum: 1440,
+            default: 30,
+          }
+        max_time:
+          {
+            type: integer,
+            deprecated: true,
+            description: Legacy duration in nanoseconds,
+            minimum: 60000000000,
+            maximum: 86400000000000,
+          }
+        proxies:
+          { type: array, maxItems: 100, items: { type: string, format: uri } }
+    ResultFilter:
+      type: object
+      additionalProperties: false
+      properties:
+        search: { type: string }
+        category: { type: string }
+        min_rating: { type: number, minimum: 0, maximum: 5 }
+        has_phone: { type: boolean }
+        has_website: { type: boolean }
+        has_instagram: { type: boolean }
+        has_email: { type: boolean }

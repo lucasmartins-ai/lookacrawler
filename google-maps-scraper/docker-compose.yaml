@@ -1,0 +1,42 @@
+services:
+  scraper:
+    build:
+      context: .
+    image: google-maps-scraper:2.2.0
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - gmaps-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  postgres:
+    profiles: [distributed]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: gmaps
+      POSTGRES_USER: gmaps
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gmaps -d gmaps"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+secrets:
+  postgres_password:
+    file: ./local/postgres_password.txt
+volumes:
+  gmaps-data:
+  postgres-data:
