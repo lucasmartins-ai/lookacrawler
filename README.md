@@ -211,7 +211,7 @@ tool drive a Google Maps scraper written in Go. Its source lives in
 [`google-maps-scraper/`](google-maps-scraper/) (MIT, from
 [coelhobugado/google-maps-scraper](https://github.com/coelhobugado/google-maps-scraper),
 with local fixes for hangs and leaked browsers). Build it once (needs Go 1.26+;
-`install-browser` also needs Node.js 18+). The Docker image ships it ready:
+`install-browser` also needs Node.js 18+; the Docker image ships it built):
 
 ```bash
 bun run build:maps
