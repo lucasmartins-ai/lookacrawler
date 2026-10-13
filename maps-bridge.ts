@@ -90,11 +90,11 @@ export interface MapsScrapeResult {
  * Locate the `maps-leads` executable across standard project paths.
  */
 export function resolveMapsLeadsBinary(customPath?: string): string | null {
-  if (customPath && fs.existsSync(customPath)) {
-    return customPath;
-  }
-  if (process.env.MAPS_LEADS_BIN && fs.existsSync(process.env.MAPS_LEADS_BIN)) {
-    return process.env.MAPS_LEADS_BIN;
+  // An explicit path that does not exist is a mistake to report, not a cue to
+  // silently run some other binary found on disk.
+  const explicit = customPath || process.env.MAPS_LEADS_BIN;
+  if (explicit) {
+    return fs.existsSync(explicit) ? explicit : null;
   }
 
   // ponytail: build the vendored scraper with `bun run build:maps`; a

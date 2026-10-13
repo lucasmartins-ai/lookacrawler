@@ -130,8 +130,8 @@ bun run cli.ts contacts https://example.com
 # Search local businesses on Google Maps (browser-driven)
 bun run cli.ts places "dentists in Bristol" --limit 5 --csv -o places.csv
 
-# B2B lead discovery via the sibling google-maps-scraper engine
-# (set MAPS_LEADS_BIN if the binary is not in a standard path)
+# B2B lead discovery via the bundled google-maps-scraper engine
+# (build it first: bun run build:maps)
 bun run cli.ts maps "dental clinic" "Bristol" --limit 20
 
 # Enrich a company website: emails, socials, decision makers, short summary
@@ -206,19 +206,20 @@ to the proxy directly (for local development only).
 
 ### 3. Google Maps engine (optional)
 
-The `maps` command and the `discover_local_leads` MCP tool delegate to a sibling
-Google Maps scraper binary. It is a separate Go project
-([`google-maps-scraper`](https://github.com/coelhobugado/google-maps-scraper),
-MIT) and is **not** vendored into this repository.
+The `maps` command, `daemon`, `gtm`, `intel` and the `discover_local_leads` MCP
+tool drive a Google Maps scraper written in Go. Its source lives in
+[`google-maps-scraper/`](google-maps-scraper/) (MIT, from
+[coelhobugado/google-maps-scraper](https://github.com/coelhobugado/google-maps-scraper),
+with local fixes for hangs and leaked browsers). Build it once (needs Go 1.26+):
 
-Place the compiled `maps-leads` binary in one of these locations, or point
-`MAPS_LEADS_BIN` at it:
+```bash
+bun run build:maps
+cd google-maps-scraper && ./maps-leads install-browser   # first run only
+```
 
-```
-./google-maps-scraper/maps-leads          # repo root
-../google-maps-scraper/maps-leads         # sibling directory
-$MAPS_LEADS_BIN                           # anywhere
-```
+The binary is looked up next to `cli.ts`, in `../google-maps-scraper/`, or at
+`$MAPS_LEADS_BIN` (an explicit path that does not exist is an error, not a
+fallback).
 
 Without it, `maps` fails fast with a clear message; `extract`, `crawl`,
 `contacts`, `places` and `enrich` are unaffected. Pass `--email` to let the

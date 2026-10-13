@@ -16,7 +16,7 @@ const DEFAULT_PORT = 8088;
 
 export interface MapsDaemonOptions {
   port?: number;
-  /** Scraper data folder. Default: a per-port folder under os.tmpdir(). */
+  /** Scraper data folder. Default: ~/.lookacrawler/maps-daemon/data-<port>. */
   dataFolder?: string;
   concurrency?: number;
   customBinaryPath?: string;
@@ -40,11 +40,20 @@ interface DaemonState {
   startedAt: string;
 }
 
-const stateFile = (port: number) => path.join(os.tmpdir(), `lookacrawler-maps-daemon-${port}.json`);
+// Per-user, owner-only: a shared /tmp would let another local user plant the
+// state file (a PID for `stop` to signal) or a symlink for us to write through.
+const stateDir = () => {
+  const dir = path.join(os.homedir(), ".lookacrawler", "maps-daemon");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
+};
+const stateFile = (port: number) => path.join(stateDir(), `${port}.json`);
 
 function readState(port: number): DaemonState | null {
   try {
-    return JSON.parse(fs.readFileSync(stateFile(port), "utf8"));
+    const state = JSON.parse(fs.readFileSync(stateFile(port), "utf8"));
+    // pid 0 or negative would make kill(-pid) hit our own process group.
+    return Number.isInteger(state?.pid) && state.pid > 1 ? state : null;
   } catch {
     return null;
   }
@@ -87,8 +96,8 @@ export async function startMapsDaemon(options: MapsDaemonOptions = {}): Promise<
     throw new Error("maps-leads binary not found. Run `bun run build:maps` or set MAPS_LEADS_BIN.");
   }
 
-  const dataFolder = options.dataFolder ?? path.join(os.tmpdir(), `lookacrawler-maps-data-${port}`);
-  fs.mkdirSync(dataFolder, { recursive: true });
+  const dataFolder = options.dataFolder ?? path.join(stateDir(), `data-${port}`);
+  fs.mkdirSync(dataFolder, { recursive: true, mode: 0o700 });
 
   // Flags per google-maps-scraper/runner/runner.go ParseConfigArgs: `serve` is
   // the web mode; -addr is the listen address; -c the worker count.
@@ -99,7 +108,7 @@ export async function startMapsDaemon(options: MapsDaemonOptions = {}): Promise<
   if (!pid) throw new Error("Failed to start the maps-leads daemon (no PID).");
   child.unref();
 
-  fs.writeFileSync(stateFile(port), JSON.stringify({ pid, port, dataFolder, startedAt: new Date().toISOString() } satisfies DaemonState));
+  fs.writeFileSync(stateFile(port), JSON.stringify({ pid, port, dataFolder, startedAt: new Date().toISOString() } satisfies DaemonState), { mode: 0o600 });
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

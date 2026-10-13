@@ -3,7 +3,7 @@ import { resolveMapsLeadsBinary, discoverLocalLeads, formatWhatsAppLink, describ
 import { deepEnrichLead } from "./enrichment-bridge.js";
 
 describe("Maps bridge binary resolution", () => {
-  test("no absolute developer paths leak into the candidate list", () => {
+  test("an explicit path that does not exist resolves to nothing", () => {
     const before = process.env.MAPS_LEADS_BIN;
     process.env.MAPS_LEADS_BIN = "/definitely/not/here/maps-leads";
     // A hardcoded /Users/<name>/... path would resolve on the author's Mac and
