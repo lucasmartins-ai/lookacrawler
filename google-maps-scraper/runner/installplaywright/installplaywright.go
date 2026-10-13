@@ -20,6 +20,10 @@ func New(cfg *runner.Config) (runner.Runner, error) {
 }
 
 func (i *installer) Run(context.Context) error {
+	if err := ensureDriver(); err != nil {
+		return fmt.Errorf("could not install driver: %w", err)
+	}
+
 	opts := []*playwright.RunOptions{
 		{
 			Browsers: []string{"chromium"},

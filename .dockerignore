@@ -4,3 +4,8 @@ node_modules
 crawler_cache.sqlite*
 dist
 *.log
+google-maps-scraper/maps-leads
+google-maps-scraper/webdata
+google-maps-scraper/dados
+.env
+.env.*

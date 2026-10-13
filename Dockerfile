@@ -1,4 +1,13 @@
-FROM oven/bun:1.3 as base
+# The Google Maps engine (maps, gtm, intel, daemon) is a Go binary; build it
+# here so the runtime image needs no Go toolchain.
+FROM golang:1.26 AS maps
+WORKDIR /src
+COPY google-maps-scraper/go.mod google-maps-scraper/go.sum ./
+RUN go mod download
+COPY google-maps-scraper/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/maps-leads .
+
+FROM oven/bun:1.3 AS base
 WORKDIR /app
 
 # Install System dependencies for Playwright Chromium
@@ -34,6 +43,12 @@ RUN bun install --frozen-lockfile
 RUN bunx playwright install chromium
 
 COPY . .
+
+# maps-leads drives its own playwright-go driver (Node.js + playwright-core)
+# and Chromium revision; install-browser provisions both.
+COPY --from=node:24-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=maps /out/maps-leads /app/google-maps-scraper/maps-leads
+RUN /app/google-maps-scraper/maps-leads install-browser
 
 EXPOSE 3000
 
