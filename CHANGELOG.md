@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `stop` only signals a PID it recorded and only while the port still answers.
 
 ### Fixed
+
+- `extract` failed intermittently with "Extraction error: disk I/O error"
+  (`SQLITE_IOERR_VNODE`). On macOS something hard-links the `-wal`/`-shm` files
+  of a cache DB kept under `~/Downloads/lookacrawler` while a connection is open,
+  and Apple's SQLite then rejects writes. The default cache now lives in
+  `$XDG_CACHE_HOME/lookacrawler` (or `~/.cache/lookacrawler`); `LOOKACRAWLER_DB_PATH`
+  still overrides it. Measured: 4/6 failures with a fresh DB in the repo dir vs
+  0/6 in `~/.cache`; 20/20 consecutive extracts clean after the change.
+- The cache is best-effort: any SQLite error is logged once on stderr and treated
+  as a miss, so a broken cache no longer fails an extraction.
 - `maps` reported a search with no results as a failure ("maps-leads failed:
   inactivity timeout"): that is how the scraper ends an empty search. It is
   an empty success again; a crashed browser still fails with its error.

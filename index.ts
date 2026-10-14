@@ -796,7 +796,7 @@ Login-walled pages return only a summary line. Other hosts return platform "unkn
     async () => {
       let totalCached = 0;
       try {
-        const row = db.query<{ count: number }, []>("SELECT COUNT(*) as count FROM pages").get();
+        const row = db?.query<{ count: number }, []>("SELECT COUNT(*) as count FROM pages").get();
         totalCached = row?.count || 0;
       } catch {
         /* ignore */
