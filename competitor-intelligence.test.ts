@@ -45,6 +45,16 @@ describe("auditHtml", () => {
     expect(good.conversion.email).toBe("contato@studio.example");
     expect(good.conversion.hasContactForm).toBe(true);
   });
+  test("booking needs a booking page or vendor, not the word 'booking'", () => {
+    const page = (body: string) => auditHtml(`<html><head><title>T</title></head><body>${body}</body></html>`, "https://clinic.example/");
+    // Phone-only practice whose FAQ talks about booking (the247dentist pattern).
+    expect(page(`<p>Do I need to be registered to book an appointment? Call us when booking.</p><a href="/contact">Book now</a><a href="tel:01142760483">Book an appointment</a>`).conversion.hasOnlineBooking).toBe(false);
+    expect(page(`<a href="https://smile.dentally.co/">Book</a>`).conversion.bookingUrl).toBe("https://smile.dentally.co/");
+    expect(page(`<a href="/book-online/">Book online</a>`).conversion.hasOnlineBooking).toBe(true);
+    expect(page(`<a href="https://onlineappointment.carestack.uk/?dn=x#/home">Book</a>`).conversion.hasOnlineBooking).toBe(true);
+    expect(page(`<a href="https://x.portal.dental/practices/Castle">Book a check-up</a>`).conversion.hasOnlineBooking).toBe(true);
+    expect(page(`<iframe src="https://widget.vetstoria.com/abc"></iframe>`).conversion.hasOnlineBooking).toBe(true);
+  });
   test("lists services from a services heading", () => {
     expect(good.services).toEqual(["Implantes dentários", "Clareamento a laser"]);
   });
