@@ -61,6 +61,7 @@ Options for 'contacts':
 
 Options for 'maps':
   --email                     Let the scraper extract public emails (slower).
+  --reviews                   Also fetch extra reviews (maps; ~+20s per query).
   --location <text>           Location passed to the Maps engine.
   --limit <n>                 Maximum leads (default: 20).
   --lang <code>               Language for categories and labels (default: pt).
@@ -395,6 +396,7 @@ async function runCli() {
         limit,
         fastMode: args.includes("--fast-mode"),
         extractEmails: args.includes("--email"),
+        extraReviews: args.includes("--reviews"),
         lang: getOption(args, "--lang"),
       });
       const outputJson = JSON.stringify(res, null, 2);

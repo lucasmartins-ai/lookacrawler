@@ -156,6 +156,20 @@ describe("Maps CLI completion", () => {
     expect(res.data[0].title).toContain("-depth 1 ");
   });
 
+  test("keeps reviews and booking buttons, and asks for extra reviews only when requested", async () => {
+    const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
+    const path = `${dir}/reviews`;
+    // Echoes argv into the title so the flag is observable, plus the review fields.
+    Bun.write(path, `#!/bin/sh\nprintf '{"title":"%s","cid":"1","user_reviews":[{"Rating":1,"Description":"No reply"}],"order_online":[{"link":"https://booksy.com/x"}]}\\n' "$*"\n`);
+    require("node:fs").chmodSync(path, 0o755);
+    const res = await discoverLocalLeads("vets", { customBinaryPath: path, preferDaemon: false, idleMs: 300, extraReviews: true });
+    expect(res.data[0].title).toContain("-extra-reviews");
+    expect(res.data[0].user_reviews?.[0].Description).toBe("No reply");
+    expect(res.data[0].order_online?.[0].link).toBe("https://booksy.com/x");
+    const plain = await discoverLocalLeads("vets", { customBinaryPath: path, preferDaemon: false, idleMs: 300 });
+    expect(plain.data[0].title).not.toContain("-extra-reviews");
+  });
+
   test("an empty run that logged scraper errors is a failure, not an empty success", async () => {
     const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
     const path = `${dir}/crashing`;

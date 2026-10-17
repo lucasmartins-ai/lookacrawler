@@ -51,6 +51,20 @@ export interface GoogleMapsLead {
    */
   whatsapp_source?: "google" | "phone";
   emails?: string[];
+  /** Public reviews shown on the listing (~5, Google's "most relevant"). */
+  user_reviews?: MapsReview[];
+  /** Extra reviews, only with `extraReviews`. Rating is not parsed for these (always 0). */
+  user_reviews_extended?: MapsReview[];
+  /** Google "Book"/"Order" buttons: proof the business already takes bookings online. */
+  order_online?: { link?: string; source?: string }[];
+  reservations?: { link?: string; source?: string }[];
+}
+
+export interface MapsReview {
+  Name?: string;
+  Rating?: number;
+  Description?: string;
+  When?: string;
 }
 
 export interface MapsScrapeOptions {
@@ -70,6 +84,8 @@ export interface MapsScrapeOptions {
   geo?: string;
   radius?: number;
   extractEmails?: boolean;
+  /** Ask the scraper for extra reviews (`-extra-reviews`, ~+20s per query). CLI mode only. */
+  extraReviews?: boolean;
   preferDaemon?: boolean;
   daemonPort?: number;
   daemonUrl?: string;
@@ -530,6 +546,10 @@ export async function discoverLocalLeadsViaCli(
     args.push("-email");
   }
 
+  if (options.extraReviews) {
+    args.push("-extra-reviews");
+  }
+
   if (options.geo) {
     args.push("-geo", options.geo);
   }
@@ -681,6 +701,10 @@ export async function discoverLocalLeadsViaCli(
           phone_e164: phoneInfo?.valid ? phoneInfo.e164 : undefined,
           phone_type: phoneInfo?.type,
           emails: parsed.emails || undefined,
+          user_reviews: parsed.user_reviews?.length ? parsed.user_reviews : undefined,
+          user_reviews_extended: parsed.user_reviews_extended?.length ? parsed.user_reviews_extended : undefined,
+          order_online: parsed.order_online?.length ? parsed.order_online : undefined,
+          reservations: parsed.reservations?.length ? parsed.reservations : undefined,
         };
 
         leads.push(lead);
