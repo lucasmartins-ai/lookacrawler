@@ -6,11 +6,11 @@
  * below is a self-contained string run with CDP_EVAL (awaitPromise), so the
  * builders are pure and testable without a browser.
  *
- * Facebook extraction (decoy filtering, post-container anchoring, entity
- * links) is ported from OpenCLI — https://github.com/jackwener/opencli
- * (clis/facebook/feed.js, clis/facebook/search.js), Copyright jackwener,
- * Apache License 2.0 — and extended with pt-BR labels, post URLs and full
- * post text. The Instagram comment write mirrors clis/instagram/comment.js.
+ * Facebook decoy-character stripping follows OpenCLI —
+ * https://github.com/jackwener/opencli (clis/facebook/feed.js), Copyright
+ * jackwener, Apache License 2.0. The 10/2026 feed reader (story_message,
+ * hover-filled permalinks, tooltip dates) is our own.
+ * The Instagram comment write mirrors clis/instagram/comment.js.
  */
 
 const BRIDGE = process.env.ANTIGRAVITY_BRIDGE_URL || "http://127.0.0.1:8765";
@@ -32,9 +32,12 @@ export async function bridgeStatus(): Promise<{ ok: boolean; detail: any }> {
 }
 
 async function bridge(payload: Record<string, unknown>, timeoutMs = 15_000): Promise<any> {
+  // No keep-alive: the bridge drops idle sockets and Bun reuses them, failing
+  // the next call in ~3ms with ECONNRESET ("socket connection was closed").
   const r = await fetch(`${BRIDGE}/api/command`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    keepalive: false,
+    headers: { "Content-Type": "application/json", Connection: "close" },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -184,176 +187,174 @@ export async function igComment(post: string, text: string, opts: { replyTo?: st
 
 // ── Facebook ─────────────────────────────────────────────────────────────────
 
-// Shared page-side helpers. Facebook injects zero-width/bidi chars and fake
-// digit/spaced-letter nodes to poison scrapers (OpenCLI #2089).
+// Shared page-side helpers. Facebook injects zero-width/bidi/grapheme-joiner
+// chars and fake digit/spaced-letter nodes to poison scrapers (OpenCLI #2089).
 const FB_HELPERS = `
-  const clean = (v) => String(v || "").replace(/[\\u200b-\\u200f\\u202a-\\u202e\\u2060\\ufeff]/g, "").replace(/\\s+/g, " ").trim();
-  const isDecoy = (t) => !t || /^\\d{8,}$/.test(t) || (/^(?:\\S ){4,}\\S$/.test(t) && t.replace(/\\s/g, "").length <= 12);
+  const clean = (v) => String(v || "").replace(/[\\u034f\\u200b-\\u200f\\u202a-\\u202e\\u2060\\ufeff]/g, "").replace(/\\s+/g, " ").trim();
   const textOf = (el) => clean(el && el.textContent);
   const isAuthPage = () => /^\\/(login|checkpoint)(\\/|$|\\.php)/.test(location.pathname)
     || /^(Log in to Facebook|Entrar no Facebook|Entre no Facebook)/i.test(textOf(document.body))
     || /You must log in to continue|Você precisa entrar para continuar/i.test(textOf(document.body));
 `;
 
-/** pt-BR + en labels. Facebook localises aria-labels, so English-only matching finds nothing in Brazil. */
-export const FB_LABELS = {
-  postMenu: "^(Actions for this post|Ações para esta publicação|Ações desta publicação|Ações para este post)$",
-  like: "^(Like|Curtir)$",
-  comment: "^(Comment|Comentar)$",
-  share: "^(Share|Compartilhar)$",
-  action: "^(Like|Comment|Share|Send|Follow|Curtir|Comentar|Compartilhar|Enviar|Seguir|Responder)$",
-  sponsored: "(^|\\s)(Sponsored|Patrocinado)(\\s|$)",
-  chrome: "^(People you may know|Suggested for you|Suggested Groups|Pessoas que você talvez conheça|Sugestões para você|Grupos sugeridos|Reels)",
-  seeMore: "^(See more|Ver mais)$",
-  metric: "^(All:|Todas as reações:)|\\b(likes?|reactions?|comments?|shares?|curtidas?|reações|comentários?|compartilhamentos?)\\b",
-  timestamp: "^(\\d+\\s*(s|m|h|d|w|min|sem|a|mo|yr)|Just now|Yesterday|Agora|Ontem)(\\s*[·•.])?$",
-};
-
-export function buildFbPostsScript(limit: number): string {
-  const L = JSON.stringify(FB_LABELS);
-  return `(() => {
+/**
+ * Feed items of a group, page or post search (Facebook layout of 10/2026).
+ *
+ * Measured on a public group in pt-BR: [role=article] is empty, visible
+ * innerText is decoy, and the post body sits in
+ * [data-ad-rendering-role=story_message] (older builds: [data-ad-preview=message]).
+ * The permalink is a bare "?__cft__" href that Facebook only fills in on
+ * hover, so the script hovers those links first. In search results the
+ * permalink is /groups/<id>/?multi_permalinks=<post id>. The post date only
+ * exists as the timestamp link's hover tooltip; dates are read for posts not
+ * in `known`, within a time budget, because the bridge gives an eval ~8s.
+ */
+export function buildFbPostsScript(limit: number, known: string[] = [], dateBudgetMs = 3000): string {
+  return `(async () => {
     ${FB_HELPERS}
-    const L = ${L}; const re = (k) => new RegExp(L[k], "i");
-    const limit = ${limit};
+    const limit = ${limit}, known = new Set(${JSON.stringify(known)}), budget = ${dateBudgetMs};
     if (isAuthPage()) return { status: "auth", rows: [] };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const abs = (h) => { try { return new URL(h, "https://www.facebook.com"); } catch { return null; } };
+    const MSG = '[data-ad-rendering-role="story_message"], [data-ad-preview="message"], [data-ad-comet-preview="message"]';
 
-    const labelOf = (el) => clean(el && el.getAttribute && el.getAttribute("aria-label"));
-    // textContent glues sibling nodes ("Loja XPatrocinadoCompre"), so match per element.
-    const isSponsored = (root) => Array.from(root.querySelectorAll('[dir="auto"], span, a, [aria-label]'))
-      .some((el) => /^(Sponsored|Patrocinado)$/i.test(textOf(el)) || /^(Sponsored|Patrocinado)$/i.test(labelOf(el)));
-    const postUrlFrom = (root) => {
-      for (const a of root.querySelectorAll("a[href]")) {
-        const h = a.href || a.getAttribute("href") || "";
-        if (/\\/posts\\/|\\/permalink\\.php|\\/story\\.php|\\/photo\\/\\?fbid=|\\/groups\\/[^/]+\\/(posts|permalink)\\//i.test(h)) return h.split("?")[0];
-      }
+    // A post URL in any of the shapes Facebook uses, canonicalised (no tracking params).
+    const postUrlOf = (href) => {
+      const u = abs(href); if (!u || !/(^|\\.)facebook\\.com$/.test(u.hostname)) return "";
+      const p = u.pathname, q = u.searchParams;
+      let m = p.match(/^\\/groups\\/([^/]+)\\/(?:posts|permalink)\\/(\\d+)/);
+      if (m) return "https://www.facebook.com/groups/" + m[1] + "/posts/" + m[2] + "/";
+      m = p.match(/^\\/groups\\/([^/]+)\\/?$/);
+      if (m && /^\\d+$/.test(q.get("multi_permalinks") || "")) return "https://www.facebook.com/groups/" + m[1] + "/posts/" + q.get("multi_permalinks") + "/";
+      if ((p === "/permalink.php" || p === "/story.php") && q.get("story_fbid")) return "https://www.facebook.com" + p + "?story_fbid=" + q.get("story_fbid") + (q.get("id") ? "&id=" + q.get("id") : "");
+      m = p.match(/^\\/([^/]+)\\/posts\\/([\\w-]+)/);
+      if (m) return "https://www.facebook.com/" + m[1] + "/posts/" + m[2] + "/";
       return "";
     };
-    // Comments are [role=article] nested in the post; keep their text out of the post body.
-    const own = (root) => (el) => { const art = el.closest('[role="article"]'); return !art || art === root || !root.contains(art); };
-    const blocks = (root) => { const seen = new Set(); return Array.from(root.querySelectorAll('[dir="auto"]')).filter(own(root)).map(textOf).filter((t) => t && t.length <= 2000 && !seen.has(t) && seen.add(t)); };
-    const findAuthor = (root) => {
-      const links = [root.querySelector("h2 a[href], h3 a[href], h4 a[href], strong a[href]"), ...root.querySelectorAll('a[role="link"][href]')].filter(Boolean);
-      for (const a of links) {
-        const t = textOf(a), h = a.href || a.getAttribute("href") || "";
-        if (t.length > 1 && t.length <= 80 && !re("action").test(t) && !re("metric").test(t) && !re("timestamp").test(t) && !isDecoy(t)
-          && !/^[\\d\\s.,-]+$/.test(t) && !/\\/groups\\/[^/]+\\/?$|\\/watch\\/|\\/reel\\/|\\/events\\//i.test(h)) return { name: t, url: h.split("?")[0] };
-      }
-      return { name: "", url: "" };
-    };
-    const content = (root, author) => blocks(root).filter((t) => t !== author && t.length > 3
-      && !re("chrome").test(t) && !re("sponsored").test(t) && !re("action").test(t) && !re("metric").test(t)
-      && !re("timestamp").test(t) && !re("seeMore").test(t) && !isDecoy(t));
+    const pathOf = (a) => { const u = abs(a.getAttribute("href") || ""); return u ? u.origin + u.pathname : ""; };
 
-    // Anchor on the one "Actions for this post" menu each post has and climb to the
-    // highest ancestor that still holds exactly one — that bounds a single post.
-    const menus = Array.from(document.querySelectorAll("[aria-label]")).filter((el) => re("postMenu").test(labelOf(el)));
-    const countMenus = (n) => Array.from(n.querySelectorAll("[aria-label]")).filter((el) => re("postMenu").test(labelOf(el))).length;
-    const LANDMARKS = new Set(["main", "feed", "banner", "navigation", "complementary", "contentinfo", "region"]);
-    const containers = [...document.querySelectorAll('[role="article"]')].filter((el) => !el.closest('[role="article"] [role="article"]'));
-    for (const m of menus) {
-      let node = m.parentElement, best = null;
-      for (let d = 0; d < 22 && node && node !== document.body; d++, node = node.parentElement) {
-        if (LANDMARKS.has(node.getAttribute("role") || "")) break;
-        if (countMenus(node) === 1) best = node; else break;
-      }
-      if (best && !containers.includes(best)) containers.push(best);
+    const groupText = textOf(document.querySelector('[role="main"]') || document.body).slice(0, 6000);
+    const groupPublic = !/^\\/groups\\//.test(location.pathname) ? null
+      : /Grupo [Pp]úblico|Public group/.test(groupText) ? true
+      : /Grupo [Pp]rivado|Private group/.test(groupText) ? false : null;
+
+    // One item per feed child that holds a post body.
+    const feed = document.querySelector('[role="feed"]') || document.querySelector('[role="main"]') || document.body;
+    const items = [];
+    for (const m of document.querySelectorAll(MSG)) {
+      let c = m;
+      while (c.parentElement && c.parentElement !== feed && c.parentElement !== document.body) c = c.parentElement;
+      if (!items.includes(c)) items.push(c);
     }
 
-    const rows = [], seen = new Set();
-    for (const root of containers) {
-      const full = textOf(root);
-      if (!full || full.length < 20 || isSponsored(root) || re("chrome").test(full)) continue;
-      const author = findAuthor(root);
-      const text = clean(content(root, author.name).join(" "));
-      const url = postUrlFrom(root);
-      const key = url || text.slice(0, 200);
-      if (!text || seen.has(key)) continue;
-      seen.add(key);
-      const comments = Array.from(root.querySelectorAll('[role="article"]')).filter((c) => c !== root).map((c) => {
-        const a = findAuthor(c);
-        return { author: a.name, authorUrl: a.url, text: clean(content(c, a.name).join(" ")).slice(0, 600) };
+    // Permalinks are filled in on hover.
+    const bare = (item) => Array.from(item.querySelectorAll("a")).filter((a) => !a.closest(MSG) && /^(\\?|#|$)/.test(a.getAttribute("href") || ""));
+    const fire = (a, types) => { const r = a.getBoundingClientRect(); for (const t of types) a.dispatchEvent(new (t.startsWith("pointer") && typeof PointerEvent === "function" ? PointerEvent : t.startsWith("focus") || t === "blur" ? FocusEvent : MouseEvent)(t, { bubbles: !/enter|leave|^focus$|blur/.test(t), clientX: r.x + 2, clientY: r.y + 2 })); };
+    const hover = (a) => fire(a, ["pointerover", "pointerenter", "mouseover", "mouseenter", "mousemove", "focus", "focusin"]);
+    const unhover = (a) => fire(a, ["pointerout", "pointerleave", "mouseout", "mouseleave", "blur"]);
+    const tips = () => Array.from(document.querySelectorAll('[role="tooltip"]'));
+    const pending = items.flatMap(bare);
+    pending.forEach(hover);
+    if (pending.length) { await sleep(500); pending.forEach(unhover); for (let w = 0; w < 10 && tips().length; w++) await sleep(50); }
+
+    const rows = [], started = Date.now();
+    for (const item of items) {
+      const msg = item.querySelector(MSG);
+      // Long posts end in "… Ver mais"; expanding needs a click, so keep the preview.
+      const text = clean(msg.innerText || msg.textContent).replace(/\\s*(…|[.]{3})?\\s*(Ver mais|See more)$/i, "");
+      if (!text) continue;
+      const links = Array.from(item.querySelectorAll("a[href]")).filter((a) => !a.closest(MSG) && !a.closest('[role="article"]'));
+      const stamp = links.find((a) => postUrlOf(a.href || a.getAttribute("href")));
+      const url = stamp ? postUrlOf(stamp.href || stamp.getAttribute("href")) : "";
+      const person = links.find((a) => /\\/user\\/\\d+|\\/profile\\.php|\\/people\\//.test(pathOf(a)) && textOf(a));
+      const nameEl = item.querySelector('[data-ad-rendering-role="profile_name"]');
+      const author = person ? textOf(person) : textOf(nameEl).replace(/\\s*·.*$/, "");
+      const groupLink = links.find((a) => /^https:\\/\\/www\\.facebook\\.com\\/groups\\/[^/]+\\/?$/.test(pathOf(a)) && (textOf(a) || a.getAttribute("aria-label")));
+      const group = groupLink ? { name: textOf(groupLink) || clean(groupLink.getAttribute("aria-label")), url: pathOf(groupLink) } : null;
+      let date = "";
+      if (stamp && !known.has(url) && Date.now() - started < budget) {
+        // Tooltips stack while hovered; take the one this hover adds.
+        const before = new Set(tips());
+        hover(stamp);
+        for (let w = 0; w < 12 && !date; w++) { await sleep(50); date = textOf(tips().find((t) => !before.has(t))); }
+        unhover(stamp);
+      }
+      const comments = Array.from(item.querySelectorAll('[role="article"]')).map((c) => {
+        const a = c.querySelector("a[href]");
+        const name = textOf(a);
+        const body = Array.from(c.querySelectorAll('[dir="auto"]')).map(textOf).filter((t) => t && t !== name);
+        return { author: name, authorUrl: a ? pathOf(a) : "", text: clean([...new Set(body)].join(" ")).slice(0, 600) };
       }).filter((c) => c.author && c.text);
-      rows.push({ author: author.name, authorUrl: author.url, text: text.slice(0, 1500), url, comments });
+      rows.push({ author, authorUrl: person ? pathOf(person) : "", text: text.slice(0, 3000), url, date, group, comments });
       if (rows.length >= limit) break;
     }
-    return { status: rows.length ? "ok" : "no_rows", rows, diagnostics: { articles: document.querySelectorAll('[role="article"]').length, menus: menus.length } };
+    return { status: rows.length ? "ok" : "no_rows", groupPublic, rows, diagnostics: { items: items.length, noUrl: rows.filter((r) => !r.url).length } };
   })()`;
 }
 
-const FB_SCROLL = `(async () => { window.scrollTo(0, document.body.scrollHeight); await new Promise((r) => setTimeout(r, 1500)); return document.body.scrollHeight; })()`;
+const PT_MONTHS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+const EN_MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
+/** Facebook's timestamp tooltip ("Quinta, 15 de outubro de 2026 às 01:38") → "2026-10-15T01:38" (viewer's local time). Unknown shapes pass through. */
+export function parseFbDate(s: string): string {
+  const pad = (n: number | string) => String(n).padStart(2, "0");
+  let m = s.match(/(\d{1,2}) de (\p{L}+) de (\d{4})(?: às (\d{1,2}):(\d{2}))?/iu);
+  if (m && PT_MONTHS.includes(m[2].toLowerCase())) return `${m[3]}-${pad(PT_MONTHS.indexOf(m[2].toLowerCase()) + 1)}-${pad(m[1])}` + (m[4] ? `T${pad(m[4])}:${m[5]}` : "");
+  m = s.match(/(\p{L}+) (\d{1,2}), (\d{4})(?: at (\d{1,2}):(\d{2}) ?([AP]M))?/iu);
+  if (m && EN_MONTHS.includes(m[1].toLowerCase())) {
+    const h = m[4] ? (Number(m[4]) % 12) + (/PM/i.test(m[6]) ? 12 : 0) : null;
+    return `${m[3]}-${pad(EN_MONTHS.indexOf(m[1].toLowerCase()) + 1)}-${pad(m[2])}` + (h !== null ? `T${pad(h)}:${m[5]}` : "");
+  }
+  return s;
+}
+
+// Step by viewport, not to the bottom: the feed is virtualised and a jump skips items.
+const FB_SCROLL = `(async () => { window.scrollBy(0, Math.round(window.innerHeight * 1.5)); await new Promise((r) => setTimeout(r, 1500)); return window.scrollY; })()`;
 
 export interface FbPost {
   author: string;
   authorUrl: string;
   text: string;
   url: string;
+  date: string;
+  group: { name: string; url: string } | null;
+  /** Public group per its header; null when not a group page or not shown. */
+  groupPublic: boolean | null;
   source: string;
   comments: Array<{ author: string; authorUrl: string; text: string }>;
 }
 
-/** Posts of a Facebook group or page (or any feed URL), with bounded lazy-load scrolling. */
+/** Scroll the open feed and collect posts that have a permalink (an item without one is useless downstream). */
+async function collectFbFeed(source: string, limit: number): Promise<FbPost[]> {
+  const byUrl = new Map<string, FbPost>();
+  let groupPublic: boolean | null = null;
+  for (let i = 0, idle = 0; i < 20 && byUrl.size < limit && idle < 3; i++) {
+    const res = await evalOn("facebook", buildFbPostsScript(limit, [...byUrl.keys()]));
+    if (res?.status === "auth") throw new Error("Facebook sem login na aba da bridge");
+    groupPublic ??= res?.groupPublic ?? null;
+    const before = byUrl.size;
+    for (const r of res?.rows || []) {
+      if (!r.url || byUrl.has(r.url)) continue;
+      byUrl.set(r.url, { ...r, date: r.date ? parseFbDate(r.date) : "", groupPublic, source });
+    }
+    idle = byUrl.size === before ? idle + 1 : 0;
+    if (byUrl.size < limit) await evalOn("facebook", FB_SCROLL);
+  }
+  return [...byUrl.values()].slice(0, limit).map((p) => ({ ...p, groupPublic: p.groupPublic ?? groupPublic }));
+}
+
+/** Posts of a Facebook group or page (or any feed URL). Read-only. */
 export async function fbPosts(url: string, limit = 20): Promise<FbPost[]> {
   if (!/^https:\/\/(www|m)\.facebook\.com\//.test(url)) throw new Error(`not a facebook.com URL: ${url}`);
   await navigate("facebook", url);
-  let rows: any[] = [];
-  let lastHeight = 0;
-  for (let i = 0; i < 8; i++) {
-    const res = await evalOn("facebook", buildFbPostsScript(limit));
-    if (res?.status === "auth") throw new Error("Facebook sem login na aba da bridge");
-    rows = res?.rows || [];
-    if (rows.length >= limit) break;
-    const height = await evalOn("facebook", FB_SCROLL);
-    if (height === lastHeight) break; // nothing more loaded
-    lastHeight = height;
-  }
-  return rows.slice(0, limit).map((r) => ({ ...r, source: url }));
+  return collectFbFeed(url, limit);
 }
 
-export function buildFbSearchScript(limit: number): string {
-  return `(() => {
-    ${FB_HELPERS}
-    const limit = ${limit};
-    if (isAuthPage()) return { status: "auth", rows: [] };
-    const isEntity = (href) => {
-      let u; try { u = new URL(href, "https://www.facebook.com"); } catch { return false; }
-      if (!/(^|\\.)facebook\\.com$/i.test(u.hostname) || /^lm?\\.facebook\\.com$/i.test(u.hostname)) return false;
-      const p = u.pathname;
-      if (/^\\/search(\\/|$)/i.test(p)) return false; // decoy links back to search
-      if (/^\\/(login|checkpoint|help|policies|privacy|settings|bookmarks|messages|notifications|marketplace|gaming|friends|requests|saved|me)\\b/i.test(p)) return false;
-      return /^\\/(profile\\.php|photo\\.php|groups\\/|events\\/|watch\\/|reel\\/|pages\\/|permalink\\.php|story\\.php|[^/]+\\/posts\\/|[^/]+\\/videos\\/|[A-Za-z0-9.\\-]{2,}\\/?$)/i.test(p);
-    };
-    // Keep only identity params: FB appends per-render tracking nonces that defeat dedup.
-    const keyOf = (u) => {
-      const p = u.pathname.toLowerCase();
-      const ids = p === "/profile.php" ? ["id"] : (p === "/permalink.php" || p === "/story.php") ? ["story_fbid", "story_id", "fbid", "id"] : p === "/photo.php" ? ["fbid", "id"] : (p === "/watch" || p === "/watch/") ? ["v"] : [];
-      const q = ids.filter((k) => u.searchParams.has(k)).map((k) => k + "=" + u.searchParams.get(k));
-      return u.origin + u.pathname + (q.length ? "?" + q.join("&") : "");
-    };
-    const feed = document.querySelector('[role="feed"]') || document.querySelector('[role="main"]') || document.body;
-    const rows = [], seen = new Set();
-    for (const a of feed.querySelectorAll("a[href]")) {
-      const href = a.href || a.getAttribute("href") || "";
-      if (!isEntity(href)) continue;
-      const key = keyOf(new URL(href, "https://www.facebook.com"));
-      const title = textOf(a).slice(0, 80);
-      if (seen.has(key) || !title || isDecoy(title)) continue;
-      let card = a;
-      for (let i = 0; i < 4 && card.parentElement; i++) { card = card.parentElement; if (textOf(card).length > title.length + 20) break; }
-      const text = textOf(card).slice(0, 300);
-      if (isDecoy(text)) continue;
-      seen.add(key);
-      rows.push({ title, text, url: key });
-      if (rows.length >= limit) break;
-    }
-    return { status: rows.length ? "ok" : "no_rows", rows };
-  })()`;
-}
-
-export async function fbSearch(query: string, limit = 20) {
+/** Post search ("/search/posts"). Rows carry the group they were posted in; groupPublic is unknown here (null). */
+export async function fbSearch(query: string, limit = 20): Promise<FbPost[]> {
   const q = query.trim();
   if (!q) throw new Error("search query is empty");
-  await navigate("facebook", `https://www.facebook.com/search/posts?q=${encodeURIComponent(q)}`);
-  const res = await evalOn("facebook", buildFbSearchScript(limit));
-  if (res?.status === "auth") throw new Error("Facebook sem login na aba da bridge");
-  return res?.rows || [];
+  const url = `https://www.facebook.com/search/posts?q=${encodeURIComponent(q)}`;
+  await navigate("facebook", url);
+  return collectFbFeed(url, limit);
 }

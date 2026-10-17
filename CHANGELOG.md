@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `social fb-posts` / `fb-search` read the 10/2026 Facebook layout. Post body from
+  `[data-ad-rendering-role=story_message]` (fallback `[data-ad-preview=message]`),
+  permalink from the bare timestamp link that Facebook fills on hover (search:
+  `?multi_permalinks=<id>`), date from the timestamp tooltip, `groupPublic` from the
+  group header, and the source `group` on search rows. The feed is virtualised, so
+  posts are collected across viewport-sized scrolls and keyed by URL; rows without a
+  permalink are dropped. Checked live on one public pt-BR group (6 and 8 posts) and one
+  search query (6 posts) on 17/10/2026.
+- Bridge calls send `Connection: close`. The "socket connection was closed
+  unexpectedly" failure was Bun reusing a keep-alive socket the bridge had already
+  closed (the call failed in ~3 ms), not a slow page script.
+
 - `extract` failed intermittently with "Extraction error: disk I/O error"
   (`SQLITE_IOERR_VNODE`). On macOS something hard-links the `-wal`/`-shm` files
   of a cache DB kept under `~/Downloads/lookacrawler` while a connection is open,
