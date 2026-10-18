@@ -263,7 +263,7 @@ export function buildFbPostsScript(limit: number, known: string[] = [], dateBudg
       // Long posts end in "… Ver mais"; expanding needs a click, so keep the preview.
       const text = clean(msg.innerText || msg.textContent).replace(/\\s*(…|[.]{3})?\\s*(Ver mais|See more)$/i, "");
       if (!text) continue;
-      const links = Array.from(item.querySelectorAll("a[href]")).filter((a) => !a.closest(MSG) && !a.closest('[role="article"]'));
+      const links = Array.from(item.querySelectorAll("a[href]")).filter((a) => !a.closest(MSG));
       const stamp = links.find((a) => postUrlOf(a.href || a.getAttribute("href")));
       const url = stamp ? postUrlOf(stamp.href || stamp.getAttribute("href")) : "";
       const person = links.find((a) => /\\/user\\/\\d+|\\/profile\\.php|\\/people\\//.test(pathOf(a)) && textOf(a));
@@ -279,16 +279,66 @@ export function buildFbPostsScript(limit: number, known: string[] = [], dateBudg
         for (let w = 0; w < 12 && !date; w++) { await sleep(50); date = textOf(tips().find((t) => !before.has(t))); }
         unhover(stamp);
       }
-      const comments = Array.from(item.querySelectorAll('[role="article"]')).map((c) => {
-        const a = c.querySelector("a[href]");
-        const name = textOf(a);
-        const body = Array.from(c.querySelectorAll('[dir="auto"]')).map(textOf).filter((t) => t && t !== name);
-        return { author: name, authorUrl: a ? pathOf(a) : "", text: clean([...new Set(body)].join(" ")).slice(0, 600) };
-      }).filter((c) => c.author && c.text);
-      rows.push({ author, authorUrl: person ? pathOf(person) : "", text: text.slice(0, 3000), url, date, group, comments });
+      rows.push({ author, authorUrl: person ? pathOf(person) : "", text: text.slice(0, 3000), url, date, group, comments: [] });
       if (rows.length >= limit) break;
     }
     return { status: rows.length ? "ok" : "no_rows", groupPublic, rows, diagnostics: { items: items.length, noUrl: rows.filter((r) => !r.url).length } };
+  })()`;
+}
+
+/**
+ * Top-level comments of the post open in this tab (its permalink), read-only.
+ *
+ * Measured 10/2026: the permalink opens the post in a [role=dialog]; each
+ * comment is a [role=article] labelled "Comentário de <name> há <age>"
+ * (replies: "Resposta de ..."), body in [dir=auto], permalink with
+ * ?comment_id=. The default "Mais relevantes" order hides comments, so the
+ * script switches to "Todos os comentários" and presses "Ver mais
+ * comentários" (or scrolls the dialog) until `max` or the time budget (the bridge gives an eval ~8s).
+ * Only sort/expand controls are clicked; nothing is typed or reacted.
+ */
+export function buildFbCommentsScript(max = 30, budgetMs = 5000): string {
+  return `(async () => {
+    ${FB_HELPERS}
+    if (isAuthPage()) return { status: "auth", comments: [] };
+    const max = ${max}, started = Date.now(), budget = ${budgetMs};
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const root = Array.from(document.querySelectorAll('[role="dialog"]')).find((d) => d.querySelector('[data-ad-rendering-role="story_message"], [data-ad-preview="message"]')) || document.querySelector('[role="main"]') || document.body;
+    if (/Ainda não há nenhum comentário|No comments yet/i.test(textOf(root))) return { status: "ok", comments: [] };
+    const button = (re) => Array.from(root.querySelectorAll('[role="button"]')).find((b) => re.test(textOf(b)));
+    const TOP = /^(Comentário de|Comment by) /i;
+    const top = () => Array.from(root.querySelectorAll('[role="article"]')).filter((a) => TOP.test(a.getAttribute("aria-label") || ""));
+
+    const sort = button(/^(Mais relevantes|Most relevant)$/i);
+    if (sort) {
+      sort.click(); await sleep(600);
+      const all = Array.from(document.querySelectorAll('[role="menuitem"]')).find((m) => /^(Todos os comentários|All comments)/i.test(textOf(m)));
+      if (all) { all.click(); await sleep(1500); }
+    }
+    const MORE = /^(Ver mais comentários|Ver comentários anteriores|Ver \\d+ comentários?|View more comments|View previous comments|View \\d+ more comments?)/i;
+    // Older layouts page with a "Ver mais comentários" button; the 10/2026 dialog loads 10 more per scroll.
+    const scroller = () => { let el = top()[0]; while (el && el !== root && !(el.scrollHeight > el.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(el).overflowY))) el = el.parentElement; return el && el !== root ? el : null; };
+    for (let idle = 0; top().length < max && idle < 2 && Date.now() - started < budget;) {
+      const n = top().length, more = button(MORE), sc = more ? null : scroller();
+      if (more) more.click(); else if (sc) sc.scrollTop = sc.scrollHeight; else break;
+      for (let w = 0; w < 12 && top().length === n && Date.now() - started < budget; w++) await sleep(100);
+      idle = top().length === n ? idle + 1 : 0;
+    }
+
+    const comments = top().slice(0, max).map((a) => {
+      const links = Array.from(a.querySelectorAll("a[href]"));
+      const person = links.find((l) => textOf(l) && /\\/user\\/\\d+|\\/profile\\.php|^\\/[^/?]+\\/?(\\?|$)/.test(l.getAttribute("href") || ""));
+      const stamp = links.find((l) => /[?&]comment_id=\\d+/.test(l.getAttribute("href") || ""));
+      const author = person ? textOf(person) : clean((a.getAttribute("aria-label") || "").replace(TOP, "").replace(/\\s+(há|ago).*$/i, ""));
+      const age = textOf(stamp);
+      const seen = new Set([author, age]);
+      const body = Array.from(a.querySelectorAll('[dir="auto"]')).map(textOf).filter((t) => t && !seen.has(t) && seen.add(t));
+      let url = "";
+      if (stamp) { try { const u = new URL(stamp.getAttribute("href"), "https://www.facebook.com"); url = u.origin + u.pathname + "?comment_id=" + u.searchParams.get("comment_id"); } catch {} }
+      const label = (a.getAttribute("aria-label") || "").match(/\\s(há .+|.+ ago)$/i);
+      return { author, text: clean(body.join(" ")).replace(/\\s*(…|[.]{3})?\\s*(Ver mais|See more)$/i, "").slice(0, 600), date: label ? label[1] : age, url };
+    }).filter((c) => c.author && c.text);
+    return { status: "ok", comments };
   })()`;
 }
 
@@ -321,7 +371,8 @@ export interface FbPost {
   /** Public group per its header; null when not a group page or not shown. */
   groupPublic: boolean | null;
   source: string;
-  comments: Array<{ author: string; authorUrl: string; text: string }>;
+  /** Top-level comments; `date` is Facebook's relative age ("há 2 dias"), `url` the comment permalink. */
+  comments: Array<{ author: string; text: string; date: string; url: string }>;
 }
 
 /** Scroll the open feed and collect posts that have a permalink (an item without one is useless downstream). */
@@ -343,11 +394,22 @@ async function collectFbFeed(source: string, limit: number): Promise<FbPost[]> {
   return [...byUrl.values()].slice(0, limit).map((p) => ({ ...p, groupPublic: p.groupPublic ?? groupPublic }));
 }
 
-/** Posts of a Facebook group or page (or any feed URL). Read-only. */
-export async function fbPosts(url: string, limit = 20): Promise<FbPost[]> {
+/**
+ * Posts of a Facebook group or page (or any feed URL), each with its top-level
+ * comments read from the permalink (~6s per post; `comments: false` skips it). Read-only.
+ */
+export async function fbPosts(url: string, limit = 20, opts: { comments?: boolean; maxComments?: number } = {}): Promise<FbPost[]> {
   if (!/^https:\/\/(www|m)\.facebook\.com\//.test(url)) throw new Error(`not a facebook.com URL: ${url}`);
   await navigate("facebook", url);
-  return collectFbFeed(url, limit);
+  const posts = await collectFbFeed(url, limit);
+  if (opts.comments === false) return posts;
+  for (const p of posts) {
+    await navigate("facebook", p.url, 4000);
+    const res = await evalOn("facebook", buildFbCommentsScript(opts.maxComments ?? 30));
+    if (res?.status === "auth") throw new Error("Facebook sem login na aba da bridge");
+    p.comments = res?.comments || [];
+  }
+  return posts;
 }
 
 /** Post search ("/search/posts"). Rows carry the group they were posted in; groupPublic is unknown here (null). */

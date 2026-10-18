@@ -75,6 +75,7 @@ Subcommands for 'social':
   doctor                      Bridge + login state of open tabs (never navigates).
   fb-search "<query>"         Search Facebook posts.
   fb-posts <group|page url>   Posts (and their comments) of a group or page.
+  --no-comments               Skip opening each post for its comments (fb-posts).
   ig-comments <post url>      Comments of an Instagram post.
   ig-comment <post url> "<text>"  Comment on a post; dry run unless --live.
   --reply-to <comment id>     Reply to that comment (ig-comment).
@@ -316,7 +317,7 @@ async function runCli() {
     const run: Record<string, () => Promise<unknown>> = {
       doctor: () => social.socialDoctor(),
       "fb-search": () => social.fbSearch(a1, limit),
-      "fb-posts": () => social.fbPosts(a1, limit),
+      "fb-posts": () => social.fbPosts(a1, limit, { comments: !args.includes("--no-comments") }),
       "ig-comments": () => social.igComments(a1, limit),
       "ig-comment": () => social.igComment(a1, a2, { replyTo: getOption(args, "--reply-to"), live: args.includes("--live") }),
     };

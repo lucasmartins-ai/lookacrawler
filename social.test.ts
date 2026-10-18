@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import {
+  buildFbCommentsScript,
   buildFbPostsScript,
   buildIgAddCommentScript,
   buildIgCommentsScript,
@@ -50,14 +51,13 @@ const groupItem = (id: string, user: string, author: string, text: string, date:
 
 const GROUP_PT = `<html><body><div role="main"><span>Grupo Público · 12 mil membros</span><div role="feed">
   <div></div>
-  ${groupItem("111", "9001", "Carlos Exemplo", "Procuro HB20 ou Onix até 60 mil, à vista… Ver mais", "Sexta, 16 de outubro de 2026 às 09:05",
-    `<div role="article"><a href="/groups/carrosexemplo/user/9002/">Ana Fictícia</a><div dir="auto">tbm to procurando, chama no zap</div></div>`)}
+  ${groupItem("111", "9001", "Carlos Exemplo", "Procuro HB20 ou Onix até 60 mil, à vista… Ver mais", "Sexta, 16 de outubro de 2026 às 09:05")}
   ${groupItem("222", "9003", "Garagem Modelo", "Vendo Gol 2015 completo, aceito troca", "Quinta, 15 de outubro de 2026 às 18:40")}
   <div class="item"><div data-ad-rendering-role="profile_name">Sem corpo</div><div role="article"></div></div>
 </div></div></body></html>`;
 
 describe("Facebook feed extractor (10/2026 layout, pt-BR)", () => {
-  test("reads author, body, hover-filled permalink, tooltip date and comments", async () => {
+  test("reads author, body, hover-filled permalink and tooltip date", async () => {
     const res = await runInPage(GROUP_PT, buildFbPostsScript(10), undefined, fakeHover);
     expect(res.status).toBe("ok");
     expect(res.groupPublic).toBe(true);
@@ -68,7 +68,7 @@ describe("Facebook feed extractor (10/2026 layout, pt-BR)", () => {
       text: "Procuro HB20 ou Onix até 60 mil, à vista",
       url: "https://www.facebook.com/groups/carrosexemplo/posts/111/",
       date: "Sexta, 16 de outubro de 2026 às 09:05",
-      comments: [{ author: "Ana Fictícia", authorUrl: "https://www.facebook.com/groups/carrosexemplo/user/9002/", text: "tbm to procurando, chama no zap" }],
+      comments: [],
     });
     // Each post gets its own tooltip, not a stale one from the previous hover.
     expect(res.rows[1].date).toBe("Quinta, 15 de outubro de 2026 às 18:40");
@@ -123,6 +123,68 @@ describe("Facebook feed extractor (10/2026 layout, pt-BR)", () => {
     expect(parseFbDate("Friday, October 16, 2026 at 9:05 PM")).toBe("2026-10-16T21:05");
     expect(parseFbDate("Friday, October 16, 2026 at 12:30 AM")).toBe("2026-10-16T00:30");
     expect(parseFbDate("ontem")).toBe("ontem");
+  });
+});
+
+const comment = (id: string, user: string, name: string, age: string, ageShort: string, text: string, kind = "Comentário") => `
+  <div role="article" aria-label="${kind} de ${name} ${age}">
+    <a href="/groups/carrosexemplo/user/${user}/?__cft__[0]=x"><span dir="auto">${name}</span></a>
+    <div dir="auto"><div dir="auto">${text}</div></div>
+    <a href="https://www.facebook.com/groups/carrosexemplo/posts/111/?comment_id=${id}&amp;__cft__[0]=x">${ageShort}</a>
+    <div role="button">Responder</div>
+  </div>`;
+
+const POST_DIALOG = `<html><body><div role="main">feed atrás</div><div role="dialog">
+  <div data-ad-rendering-role="story_message">Vendo Onix 2016, aceito troca</div>
+  <div role="button" id="sort">Mais relevantes</div>
+  <div id="list">
+    ${comment("1", "9101", "Bruna Fictícia", "há 2 dias", "2 d", "valor?")}
+    ${comment("2", "9102", "Diego Inventado", "há 1 dia", "1 d", "aceita troca? Ver mais")}
+    ${comment("3", "9103", "Carlos Exemplo", "há 1 dia", "1 d", "aceito sim, chama inbox", "Resposta")}
+  </div>
+  <div role="button" id="more">Ver mais comentários</div>
+</div></body></html>`;
+
+/** "Todos os comentários" reveals a hidden comment; "Ver mais comentários" loads one more then disappears. */
+function fakeCommentUi(w: any) {
+  const d = w.document;
+  d.getElementById("sort").addEventListener("click", () => {
+    const item = d.createElement("div");
+    item.setAttribute("role", "menuitem");
+    item.textContent = "Todos os comentáriosMostre todos os comentários, incluindo possível spam.";
+    item.addEventListener("click", () => d.getElementById("list").insertAdjacentHTML("beforeend", comment("4", "9104", "Elisa Modelo", "há 3 horas", "3 h", "ainda disponível?")));
+    d.body.appendChild(item);
+  });
+  d.getElementById("more").addEventListener("click", (e: any) => {
+    d.getElementById("list").insertAdjacentHTML("beforeend", comment("5", "9105", "Fábio Teste", "há 1 hora", "1 h", "faz por 40?"));
+    e.target.remove();
+  });
+}
+
+describe("Facebook comments extractor (post permalink dialog)", () => {
+  const url = "https://www.facebook.com/groups/carrosexemplo/posts/111/";
+
+  test("switches to all comments, loads more, keeps top-level comments only", async () => {
+    const res = await runInPage(POST_DIALOG, buildFbCommentsScript(30, 3000), url, fakeCommentUi);
+    expect(res.status).toBe("ok");
+    expect(res.comments.map((c: any) => [c.author, c.text, c.date])).toEqual([
+      ["Bruna Fictícia", "valor?", "há 2 dias"],
+      ["Diego Inventado", "aceita troca?", "há 1 dia"],
+      ["Elisa Modelo", "ainda disponível?", "há 3 horas"],
+      ["Fábio Teste", "faz por 40?", "há 1 hora"],
+    ]);
+    expect(res.comments[0].url).toBe("https://www.facebook.com/groups/carrosexemplo/posts/111/?comment_id=1");
+  });
+
+  test("caps the number of comments", async () => {
+    const res = await runInPage(POST_DIALOG, buildFbCommentsScript(2, 3000), url, fakeCommentUi);
+    expect(res.comments).toHaveLength(2);
+  });
+
+  test("a post that says it has no comments returns none", async () => {
+    const html = `<html><body><div role="dialog"><div data-ad-rendering-role="story_message">Vendo Gol</div>
+      <span>Ainda não há nenhum comentário</span><span>Seja a primeira pessoa a comentar.</span></div></body></html>`;
+    expect(await runInPage(html, buildFbCommentsScript(30), url)).toEqual({ status: "ok", comments: [] });
   });
 });
 

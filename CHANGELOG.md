@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- `social fb-posts` reads each post's top-level comments from its permalink
+  (`{author, text, date, url}`, `date` is Facebook's relative age, max 30 per post).
+  It switches the order to "Todos os comentários" and scrolls the post dialog (or presses
+  "Ver mais comentários") within a 5 s budget. Read-only: only sort/expand controls are
+  clicked. `--no-comments` skips it (~6 s per post otherwise). Checked live 18/10/2026:
+  matches the page on two group posts with comments; 30 of 30 on a page post with
+  hundreds; 20 recent posts of group 542220895801669 really show "Ainda não há nenhum
+  comentário", so `comments: []` there is correct.
 - `audit <url>` / `audit_company_website`: deterministic SEO checklist, conversion
   channels (WhatsApp, phone, email, booking, form), services and a digital
   maturity score. No paid API.
