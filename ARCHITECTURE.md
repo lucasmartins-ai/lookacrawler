@@ -28,9 +28,9 @@ The system's core design pillar is **Token Economy**: minimizing prompt overhead
                                           |                                         |
                                           v                                         v
 +---------------------------------------------------+     +---------------------------------------------------+
-|     Resilience & Proxy Layer (resilience.ts)      |     |     Resilience & Stealth Engine (extractor.ts)    |
+|     Resilience & Proxy Layer (resilience.ts)      |     |     Resilience & Browser Engine (extractor.ts)    |
 |  - RateLimiter per domain                         |     |  - RateLimiter per domain                         |
-|  - Exponential backoff retryWithBackoff           |     |  - Stealth plugin integration                     |
+|  - Exponential backoff retryWithBackoff           |     |  - Browser rendering (Playwright)                 |
 |  - ProxyManager (HTTP / SOCKS5)                   |     |  - Playwright proxy & context extra headers/cookies|
 |  - Custom headers & serialized cookies            |     |  - Resource blocking (image, font, css abort)     |
 +---------------------------------------------------+     +---------------------------------------------------+
@@ -91,7 +91,7 @@ The system's core design pillar is **Token Economy**: minimizing prompt overhead
 - `url` (`string`, required): Valid HTTP/HTTPS target URL.
 - `mode` (`enum: "fast" | "deep"`, default `"fast"`):
   - `"fast"`: Native HTTP GET extraction with rate limiting and retry backoff.
-  - `"deep"`: Headless Chromium SPA rendering with stealth plugins and resource blocking.
+  - `"deep"`: Headless Chromium SPA rendering with resource blocking.
 - `css_selector` (`string`, optional): CSS selector to filter the DOM before readability and Markdown processing.
 - `headers` (`Record<string, string>`, optional): Key-value map of custom request headers.
 - `cookies` (`Record<string, string>`, optional): Key-value map of authentication or session cookies.

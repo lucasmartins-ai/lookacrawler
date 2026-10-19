@@ -9,7 +9,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg?logo=typescript)](https://www.typescriptlang.org)
 [![MCP Ready](https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2.svg)](https://modelcontextprotocol.io)
 [![GitHub Stars](https://img.shields.io/github/stars/lucasmartins-ai/lookacrawler?style=social)](https://github.com/lucasmartins-ai/lookacrawler)
-[![Local-First](https://img.shields.io/badge/Privacy-100%25%20Local-success.svg)](SECURITY.md)
+[![Local-First](https://img.shields.io/badge/Privacy-Local--first-success.svg)](SECURITY.md)
 
 </div>
 
@@ -19,7 +19,7 @@
 
 Web crawling for Large Language Models (LLMs) is broken by default: modern web pages contain massive HTML bloat (scripts, tracking pixels, nested divs, navigation headers, stylesheets), costing thousands of wasted tokens per page.
 
-**LookaCrawler** is an open-source, token-optimized local crawler that cuts a median 90% of tokens on real pages (21–98% across 8 sites, see `benchmark-live.ts`), extracts clean Markdown, bypasses anti-bot barriers with stealth Playwright drivers, and exposes a native **Model Context Protocol (MCP) Server** ready for **Claude Desktop, Cursor, and Antigravity**.
+**LookaCrawler** is an open-source, token-optimized local crawler that cuts a median 90% of tokens on real pages (21–98% across 8 sites, see `benchmark-live.ts`), extracts clean Markdown, renders JavaScript-heavy pages with a real browser, and exposes a native **Model Context Protocol (MCP) Server** ready for **Claude Desktop, Cursor, and Antigravity**.
 
 ---
 
@@ -32,9 +32,9 @@ Web crawling for Large Language Models (LLMs) is broken by default: modern web p
 | **Autonomous Crawling** | **Native `map` & `crawl` (BFS + URL patterns)** | Cloud Crawler | Single-page only |
 | **Pre-Crawl Actions** | **Native Playwright (click, scroll, fill)** | Paid Addon | None |
 | **Link Formatting** | **Inline, References Footnotes, Strip** | Inline only | Inline only |
-| **Data Privacy** | **100% Local (Zero Telemetry)** | Cloud Provider | Cloud API |
+| **Data Privacy** | **Local-first (Zero Telemetry)** | Cloud Provider | Cloud API |
 | **MCP Integration** | **Native Tools + Resources + Prompts** | Community Wrapper | None |
-| **Stealth & Anti-Bot** | **Real Chrome + Stealth Fingerprint** | Cloud Proxies | Basic Headers |
+| **JS Rendering** | **Real Chrome (Playwright)** | Cloud Proxies | Basic Headers |
 | **Local SQLite Cache** | **Built-in (24h TTL cache)** | Redis / Paid Addon | None |
 | **JS SPA Support** | **Playwright + Chrome Pool** | Cloud Headless | Headless |
 
@@ -51,8 +51,8 @@ Web crawling for Large Language Models (LLMs) is broken by default: modern web p
   - `crawl_website`: Breadth-first autonomous crawling with max depth, max pages, URL pattern filters (substring, `*` wildcard), and real-time token accounting.
 - **Pre-Crawl Browser Actions:** Automate clicks, scrolls, typing, and waits in Playwright before extracting content (dismiss cookie banners, scroll for infinite loading, expand accordions).
 - **Dual Hybrid Crawling Engine:**
-  - `fast`: Ultra-fast native HTTP GET with backoff. Auto-escalates to `deep` if an anti-bot challenge is encountered.
-  - `deep`: Headless Playwright engine launching real Google Chrome with stealth patches (`navigator.webdriver` cleared, WebGL spoofed, CDP leaks stripped) to transparently crawl Cloudflare/Turnstile-protected pages.
+  - `fast`: Ultra-fast native HTTP GET with backoff. Escalates to `deep` when a page needs JavaScript to render.
+  - `deep`: Headless Playwright engine launching real Google Chrome for pages that need JavaScript. Challenge pages (CAPTCHA, bot checks) are detected and reported instead of retried.
 - **Native MCP Ecosystem:**
   - **Tools:** `extract_web_content`, `crawl_website`, `map_website`, `batch_extract_web_content`, `extract_structured_data`, `extract_contacts`, `search_places`, `discover_local_leads`, `deep_enrich_lead`, `lint_anti_slop`, `lookup_social_profile`, `search_social_intent`, `audit_company_website`, `analyze_competitors`, `generate_growth_plan`, `gtm_pipeline_run`.
   - **Resources:** Live telemetry at `crawler://metrics` and cache analytics at `crawler://cache/stats`.
@@ -208,9 +208,14 @@ to the proxy directly (for local development only).
 
 The `maps` command, `daemon`, `gtm`, `intel` and the `discover_local_leads` MCP
 tool drive a Google Maps scraper written in Go. Its source lives in
-[`google-maps-scraper/`](google-maps-scraper/) (MIT, from
+[`google-maps-scraper/`](google-maps-scraper/) (MIT, originally by
+[Georgios Komninos (gosom)](https://github.com/gosom/google-maps-scraper), via
 [coelhobugado/google-maps-scraper](https://github.com/coelhobugado/google-maps-scraper),
-with local fixes for hangs and leaked browsers). Build it once (needs Go 1.26+;
+with local fixes for hangs and leaked browsers).
+
+> **Responsible use.** Google's Maps Platform terms restrict scraping Google Maps
+> content. Use this engine for low-volume research you review yourself, respect
+> each site's terms, and prefer the official Places API for commercial volume. Build it once (needs Go 1.26+;
 `install-browser` also needs Node.js 18+; the Docker image ships it built):
 
 ```bash
@@ -246,7 +251,7 @@ the container logs.
 Incoming URL ──► [Local SQLite Cache Check] ──(Hit)──► Return Cached Markdown
                        │ (Miss)
                        ▼
-            [Fast HTTP GET Request] ──(Blocked?)──► [Auto-Escalate to Deep Stealth]
+            [Fast HTTP GET Request] ──(Blocked?)──► [Escalate to Browser Rendering]
                        │                                      │
                        ▼                                      ▼
             [HTML DOM Tree Parser] ◄──────────────────────────┘
@@ -272,7 +277,7 @@ bun test
 ## ⭐ Star & Support
 If LookaCrawler saves you API fees and token costs:
 - ⭐ **Star this repository** to help other developers find it!
-- 💡 **Open an Issue / PR** for new stealth bypasses or crawler features.
+- 💡 **Open an Issue / PR** for rendering improvements or crawler features.
 
 ---
 

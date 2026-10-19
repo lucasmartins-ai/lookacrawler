@@ -19,7 +19,7 @@ Phase 1: Setup & Protocol Core [COMPLETED]
    │
    ├── Phase 6: Benchmarks & E2E Validation [COMPLETED]
    │
-   ├── Phase 7: Resilience, Proxying & Anti-Bot Protection [COMPLETED]
+   ├── Phase 7: Resilience, Proxying & Challenge Detection [COMPLETED]
    │
     ├── Phase 8: Structured JSON Schema & Batch Extraction [COMPLETED]
     │
@@ -75,10 +75,10 @@ Phase 1: Setup & Protocol Core [COMPLETED]
 
 ---
 
-### Phase 7: Resilience, Proxying & Anti-Bot Protection (Status: COMPLETED)
+### Phase 7: Resilience, Proxying & Challenge Detection (Status: COMPLETED)
 - [x] Custom HTTP headers and cookies support in `extract_web_content` MCP options (`headers`, `cookies`).
 - [x] Proxy support (HTTP/SOCKS5 proxies) for both `fast` native fetch and `deep` browser crawls (`proxy`).
-- [x] Stealth plugin tuning & Cloudflare / CAPTCHA challenge signature detection (`detectAntiBot`).
+- [x] Cloudflare / CAPTCHA challenge signature detection (`detectAntiBot`).
 - [x] Per-domain rate limiting (`RateLimiter`) and exponential backoff retries (`retryWithBackoff`).
 - [x] MIT Open Source License (`LICENSE`) added for open-source ecosystem distribution.
 
