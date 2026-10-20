@@ -536,6 +536,12 @@ Extracts title, category, formatted address, telephone, WhatsApp link, rating, r
       try {
         const { discoverLocalLeads } = await import("./maps-bridge.js");
         const res = await discoverLocalLeads(query, { location, limit, lang });
+        if (!res.success) {
+          return {
+            isError: true,
+            content: [{ type: "text", text: `Google Maps discovery failed: ${res.error || "search failed"}` }],
+          };
+        }
         return {
           content: [
             {

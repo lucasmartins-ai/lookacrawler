@@ -304,3 +304,41 @@ describe("LookaCrawler MCP Server concurrent SSE sessions", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("discover_local_leads tool", () => {
+  const PORT = 3995;
+  let proc: any = null;
+
+  beforeAll(async () => {
+    const env = { ...process.env };
+    delete env.LOOKACRAWLER_SSE_TOKEN;
+    proc = Bun.spawn(["bun", "index.ts", "--transport", "sse", "--port", String(PORT), "--host", "127.0.0.1"], {
+      cwd: import.meta.dir,
+      env: { ...env, MAPS_LEADS_BIN: "/definitely/not/here/maps-leads" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    for (let i = 0; i < 70; i++) {
+      try {
+        if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) break;
+      } catch {
+        // not ready yet
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }, 15000);
+
+  afterAll(() => proc?.kill());
+
+  it("returns an error, not an empty result, when the scraper is missing", async () => {
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+    await client.connect(new SSEClientTransport(new URL(`http://127.0.0.1:${PORT}/sse`)));
+    try {
+      const res: any = await client.callTool({ name: "discover_local_leads", arguments: { query: "dentista", location: "Goiania" } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("maps-leads");
+    } finally {
+      await client.close();
+    }
+  }, 20000);
+});

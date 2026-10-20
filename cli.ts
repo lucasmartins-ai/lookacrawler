@@ -397,6 +397,12 @@ async function runCli() {
         extractEmails: args.includes("--email"),
         lang: getOption(args, "--lang"),
       });
+      // A failed run (missing scraper, timeout, scraper error) also comes back
+      // with total 0; printing "Found 0 leads" hid it as "no businesses here".
+      if (!res.success) {
+        console.error(`Maps discovery error: ${res.error || "search failed"}`);
+        process.exit(1);
+      }
       const outputJson = JSON.stringify(res, null, 2);
       if (outputFile) {
         await writeFile(outputFile, outputJson, "utf8");
