@@ -49,12 +49,13 @@ Trend item: `rank, kind, id, name, url, views, posts, author, createTime`
 ## Paths
 
 Profile:
-1. `yt-dlp --flat-playlist -J --playlist-end N --no-warnings https://www.tiktok.com/@h`.
-   stderr matching 403/429/captcha/"IP address is blocked" -> `blocked`, stop.
+1. `yt-dlp --ignore-config --flat-playlist -J --playlist-end N https://www.tiktok.com/@h`
+   (no user config, so never cookies). stderr, warnings included and minus the
+   `ERROR: <id>:` prefix, matching 403/429/captcha/"IP address is blocked" -> `blocked`, stop.
    Any other failure (e.g. `Failed to parse JSON` on an empty body) -> step 2.
 2. Fresh headless Chromium, no stealth patches, no fetch escalation. Keep the bodies
    of `/api/post/item_list/` responses the page requests and read the rehydration
-   script. Items found -> `source: browser`. Otherwise 403/429/CAPTCHA -> `blocked`,
+   script. Items found -> `source: browser`. Otherwise 403/429 (document or API) or CAPTCHA -> `blocked`,
    else `error`.
 
 Trends: one headless page load, keep the list response, check the region the page
