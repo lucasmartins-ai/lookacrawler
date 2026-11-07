@@ -66,7 +66,9 @@ const iso = (unixSec: unknown): string | null => {
 
 /** yt-dlp stderr -> "blocked" (stop) or "extraction" (try the next path). */
 export function classifyYtDlpError(stderr: string): "blocked" | "extraction" {
-  return BLOCK_RE.test(stderr) ? "blocked" : "extraction";
+  // Drop the "ERROR: [extractor] <id>: " prefix so a handle like "captcha" is not read as a challenge.
+  const messages = stderr.replace(/^(ERROR|WARNING): (\[[^\]]+\] )?[^:\s]+: /gm, "");
+  return BLOCK_RE.test(messages) ? "blocked" : "extraction";
 }
 
 /** `yt-dlp --flat-playlist -J` output for a tiktok:user playlist. */
@@ -167,7 +169,7 @@ export interface PageCapture {
   docStatus: number | null;
   finalUrl: string;
   captcha: boolean;
-  bodies: { url: string; body: string; postData: string | null }[];
+  bodies: { url: string; status: number; body: string; postData: string | null }[];
   rehydration: string;
 }
 export type Browse = (url: string, match: RegExp) => Promise<PageCapture>;
@@ -184,14 +186,17 @@ const browse: Browse = async (url, match) => {
     const pending: Promise<void>[] = [];
     page.on("response", (r) => {
       if (!match.test(r.url())) return;
-      pending.push(r.text().then((body) => { bodies.push({ url: r.url(), body, postData: r.request().postData() }); }, () => {}));
+      const entry = { url: r.url(), status: r.status(), body: "", postData: r.request().postData() };
+      bodies.push(entry);
+      pending.push(r.text().then((body) => { entry.body = body; }, () => {}));
     });
     const resp = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
     if (resp && resp.status() < 400) {
       await page.waitForResponse((r) => match.test(r.url()), { timeout: 20_000 }).catch(() => {});
       await page.waitForTimeout(1_500); // let sibling requests and a CAPTCHA overlay settle
     }
-    await Promise.all(pending);
+    // A body that never finishes must not keep the browser open.
+    await Promise.race([Promise.all(pending), new Promise((r) => setTimeout(r, 10_000))]);
     const { captcha, rehydration } = await page.evaluate(() => ({
       captcha: !!document.querySelector("#captcha-verify-container-main-page, .captcha-verify-container, #tiktok-verify-ele, .secsdk-captcha-drag-icon"),
       rehydration: document.getElementById("__UNIVERSAL_DATA_FOR_REHYDRATION__")?.textContent || "",
@@ -205,6 +210,8 @@ const browse: Browse = async (url, match) => {
 /** 403/429 document or a visible CAPTCHA -> blocked; anything else is not. */
 export function blockedReason(c: PageCapture): string | null {
   if (c.docStatus === 403 || c.docStatus === 429) return `HTTP ${c.docStatus} on ${c.finalUrl}`;
+  const api = c.bodies.find((b) => b.status === 403 || b.status === 429);
+  if (api) return `HTTP ${api.status} on ${api.url.split("?")[0]}`;
   if (c.captcha) return `CAPTCHA challenge shown on ${c.finalUrl}`;
   return null;
 }
@@ -220,7 +227,7 @@ export async function tiktokProfile(
   const limit = Math.min(Math.max(1, opts.limit || 20), 100);
   const profileUrl = `https://www.tiktok.com/@${handle}`;
 
-  const y = await (opts.ytdlp || runYtDlp)(["--flat-playlist", "-J", "--playlist-end", String(limit), "--no-warnings", profileUrl]);
+  const y = await (opts.ytdlp || runYtDlp)(["--ignore-config", "--flat-playlist", "-J", "--playlist-end", String(limit), profileUrl]);
   let ytReason: string;
   if (y.code === 0) {
     try {

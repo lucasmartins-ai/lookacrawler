@@ -84,6 +84,10 @@ describe("classification", () => {
     expect(classifyYtDlpError(ytEmptyStderr)).toBe("extraction");
     expect(classifyYtDlpError("ERROR: [TikTok] x: Unable to download webpage: HTTP Error 403: Forbidden")).toBe("blocked");
     expect(classifyYtDlpError("ERROR: please solve the captcha")).toBe("blocked");
+    // a handle named "captcha" is not a challenge
+    expect(classifyYtDlpError(ytEmptyStderr.replace("charlidamelio", "captcha"))).toBe("extraction");
+    // a 403 reported only as a warning still counts
+    expect(classifyYtDlpError("WARNING: [tiktok:user] x: HTTP Error 403: Forbidden\nERROR: x: Unable to extract secondary user ID")).toBe("blocked");
   });
 
   test("page: 403 / 429 / captcha are blocked, 200 without captcha is not", () => {
@@ -91,6 +95,7 @@ describe("classification", () => {
     expect(blockedReason(capture({ docStatus: 429 }))).toContain("429");
     expect(blockedReason(capture({ captcha: true }))).toContain("CAPTCHA");
     expect(blockedReason(capture())).toBeNull();
+    expect(blockedReason(capture({ bodies: [{ url: "https://www.tiktok.com/api/post/item_list/?a=1", status: 403, body: "", postData: null }] }))).toContain("item_list");
   });
 
   test("handles", () => {
@@ -105,8 +110,10 @@ describe("tiktokProfile fallback", () => {
   const empty: YtDlpRun = async () => ({ code: 1, stdout: "", stderr: ytEmptyStderr });
   const forbidden: YtDlpRun = async () => ({ code: 1, stdout: "", stderr: "ERROR: HTTP Error 403: Forbidden" });
 
-  test("yt-dlp success, limit applied, browser untouched", async () => {
-    const r = await tiktokProfile("@whinderssonnunes", { limit: 2, ytdlp: ok, browse: neverBrowse });
+  test("yt-dlp success, limit applied, browser untouched, user config ignored", async () => {
+    let argv: string[] = [];
+    const r = await tiktokProfile("@whinderssonnunes", { limit: 2, ytdlp: async (a) => { argv = a; return ok(a); }, browse: neverBrowse });
+    expect(argv).toContain("--ignore-config");
     expect(r).toMatchObject({ ok: true, source: "yt-dlp" });
     if (r.ok) expect(r.items).toHaveLength(2);
   });
@@ -115,7 +122,7 @@ describe("tiktokProfile fallback", () => {
     const browse: Browse = async (url, match) => {
       expect(url).toBe("https://www.tiktok.com/@khaby.lame");
       expect(match.test("https://www.tiktok.com/api/post/item_list/?x=1")).toBe(true);
-      return capture({ bodies: [{ url, body: JSON.stringify({ itemList: [itemStruct] }), postData: null }] });
+      return capture({ bodies: [{ url, status: 200, body: JSON.stringify({ itemList: [itemStruct] }), postData: null }] });
     };
     const r = await tiktokProfile("khaby.lame", { ytdlp: empty, browse });
     expect(r).toMatchObject({ ok: true, source: "browser" });
@@ -142,7 +149,7 @@ describe("tiktokProfile fallback", () => {
 });
 
 describe("tiktokTrends", () => {
-  const ccPage = (finalUrl: string, body: string): Browse => async () => capture({ finalUrl, bodies: [{ url: "", body, postData: null }] });
+  const ccPage = (finalUrl: string, body: string): Browse => async () => capture({ finalUrl, bodies: [{ url: "", status: 200, body, postData: null }] });
 
   test("hashtag BR", async () => {
     const r = await tiktokTrends({ region: "br", period: 7, browse: ccPage("https://ads.tiktok.com/creative/creativeCenter/trends/hashtag?region=BR&period=7", ccHashtag) });
