@@ -1,0 +1,75 @@
+{
+ "BaseResp": {
+  "StatusCode": 0,
+  "StatusMessage": ""
+ },
+ "items": [
+  {
+   "hashtagID": "36871741",
+   "hashtagName": "finados",
+   "industryIDs": [
+    "23000000000",
+    "17000000000"
+   ],
+   "popularityCurve": [
+    {
+     "timestamp": "1793318400",
+     "value": 35.394270117205295
+    },
+    {
+     "timestamp": "1793404800",
+     "value": 37.39663633006697
+    }
+   ],
+   "publishCnt": "23584",
+   "rankIndex": "1",
+   "vv": "85059397"
+  },
+  {
+   "hashtagID": "2475060",
+   "hashtagName": "novembro",
+   "industryIDs": [
+    "23000000000"
+   ],
+   "popularityCurve": [
+    {
+     "timestamp": "1793318400",
+     "value": 0
+    },
+    {
+     "timestamp": "1793404800",
+     "value": 34.18846887705135
+    }
+   ],
+   "publishCnt": "21498",
+   "rankIndex": "2",
+   "vv": "69317322"
+  },
+  {
+   "hashtagID": "1664963639051270",
+   "hashtagName": "wesleyalemao",
+   "industryIDs": [
+    "23000000000"
+   ],
+   "popularityCurve": [
+    {
+     "timestamp": "1793318400",
+     "value": 0
+    },
+    {
+     "timestamp": "1793404800",
+     "value": 54.38717966168027
+    }
+   ],
+   "publishCnt": "20232",
+   "rankIndex": "3",
+   "vv": "299620573"
+  }
+ ],
+ "pagination": {
+  "hasMore": false,
+  "limit": 3,
+  "page": 1,
+  "totalCount": 3
+ }
+}

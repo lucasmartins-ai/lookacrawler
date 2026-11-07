@@ -1,0 +1,24 @@
+{
+ "__DEFAULT_SCOPE__": {
+  "webapp.user-detail": {
+   "statusCode": 0,
+   "userInfo": {
+    "user": {
+     "id": "127905465618821121",
+     "uniqueId": "khaby.lame",
+     "nickname": "Khabane lame"
+    },
+    "stats": {
+     "followerCount": 163000000,
+     "followingCount": 82,
+     "heart": 2700000000,
+     "heartCount": -1602185569,
+     "videoCount": 1358,
+     "diggCount": 0,
+     "friendCount": 77
+    },
+    "itemList": []
+   }
+  }
+ }
+}

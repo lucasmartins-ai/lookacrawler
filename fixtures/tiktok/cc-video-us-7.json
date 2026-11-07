@@ -1,0 +1,80 @@
+{
+ "requestUrl": "https://ads.us.tiktok.com/CreativeOne/Report/CreativeCenterGetTopContentsList?contentLabelIDs=&countryCode=US&limit=20&orderByMetric=1&organicOnly=false&page=1&periodDimension=3&periodEndTimestamp=1793836800",
+ "body": {
+  "BaseResp": {
+   "StatusCode": 0,
+   "StatusMessage": ""
+  },
+  "entityInfos": [
+   {
+    "itemAuthorInfo": {
+     "bio": "your favorite hand-drawn crewnecks &amp; tees\n🧸🤍🎨\nentrepreneur &amp; nurse\nShop Below ◡̈",
+     "handlerName": "megannco",
+     "nickName": "Meg Ann Co."
+    },
+    "itemAuthorMetrics": {
+     "followers": "256623"
+    },
+    "itemInfo": {
+     "authorID": "7070293872819044358",
+     "contentType": 1,
+     "createTime": "1787785387",
+     "creatorID": "6880574638150697990",
+     "itemID": "7678479724896587038",
+     "title": "Five years ago, I started my small business with no idea what it would grow into. From working out of my parents’ spare room to now having my own commercial space, @Shopify has been there every step of the way! Having the freedom to build a storefront that actually feels like my brand, from the fonts to the colors and everything in between, has made such a difference. So grateful for how far my business has come & so excited to see where it goes next! #ad #shopifypartner "
+    },
+    "itemMetrics": {
+     "engagementRate": 0.0013032844008662627,
+     "engagementRateLifeTime": 0.0019299426686209087,
+     "organicVideoViews": "5443043",
+     "organicVideoViewsLifeTime": "9655609",
+     "sixSecondsVTR": 0.027952127089917404,
+     "sixSecondsVTRLifeTime": 0.034568206417105986,
+     "videoViews": "46063622",
+     "videoViewsLifeTime": "92361811"
+    }
+   },
+   {
+    "contentTags": [
+     {
+      "contentLabelID": "11010",
+      "contentLabelName": "Food & Beverage"
+     }
+    ],
+    "itemAuthorInfo": {
+     "bio": "oi :) conto histórias \nyoutube:deixa falar \n@fefeschneider\nfefe@bpmat.com.br",
+     "handlerName": "fefe",
+     "nickName": "Fefe"
+    },
+    "itemAuthorMetrics": {
+     "followers": "17079459"
+    },
+    "itemInfo": {
+     "authorID": "6848399732281180166",
+     "contentType": 1,
+     "createTime": "1793113703",
+     "creatorID": "6532037588893564929",
+     "itemID": "7701364596807912734",
+     "title": "Medo? Só se for de acabar RUFFLES®️ @br_ruffles   #Ruffles #DêPlayNaSuaOnda "
+    },
+    "itemMetrics": {
+     "engagementRate": 0.0018291690360759932,
+     "engagementRateLifeTime": 0.0018291690360759932,
+     "organicVideoViews": "205731",
+     "organicVideoViewsLifeTime": "205731",
+     "sixSecondsVTR": 0.0501305611399089,
+     "sixSecondsVTRLifeTime": 0.05013060865821385,
+     "videoViews": "36754941",
+     "videoViewsLifeTime": "36754941"
+    }
+   }
+  ],
+  "pagination": {
+   "hasMore": true,
+   "limit": 4,
+   "page": 1,
+   "pageCount": 25,
+   "totalCount": 100
+  }
+ }
+}
