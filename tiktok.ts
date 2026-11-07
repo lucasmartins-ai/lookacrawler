@@ -170,14 +170,14 @@ export interface PageCapture {
   bodies: { url: string; body: string; postData: string | null }[];
   rehydration: string;
 }
-export type Browse = (url: string, match: RegExp, opts?: { headed?: boolean }) => Promise<PageCapture>;
+export type Browse = (url: string, match: RegExp) => Promise<PageCapture>;
 
 /**
  * Open a public page in a fresh, unmodified Chromium and keep the bodies of the
  * responses the page itself requests (read-only). Always closes the browser.
  */
-const browse: Browse = async (url, match, opts = {}) => {
-  const browser = await chromium.launch({ headless: !opts.headed });
+const browse: Browse = async (url, match) => {
+  const browser = await chromium.launch({ headless: true });
   try {
     const page = await (await browser.newContext({ locale: "en-US" })).newPage();
     const bodies: PageCapture["bodies"] = [];
@@ -255,7 +255,7 @@ const TREND_API: Record<string, RegExp> = {
 };
 
 export async function tiktokTrends(
-  opts: { region?: string; period?: number; kind?: TrendKind; headed?: boolean; browse?: Browse } = {},
+  opts: { region?: string; period?: number; kind?: TrendKind; browse?: Browse } = {},
 ): Promise<TikTokResult<TikTokTrend>> {
   const region = (opts.region || "BR").toUpperCase();
   const period = opts.period ?? 7;
@@ -270,7 +270,9 @@ export async function tiktokTrends(
   const url = `https://ads.tiktok.com/creative/creativeCenter/trends/${kind}?region=${region}&period=${period}`;
   let page: PageCapture;
   try {
-    page = await (opts.browse || browse)(url, TREND_API[kind], { headed: opts.headed });
+    // Measured 2026-11-07: headless Chromium gets HTTP 403 here (plain curl gets 200);
+    // we report that as blocked instead of disguising the browser.
+    page = await (opts.browse || browse)(url, TREND_API[kind]);
   } catch (err: any) {
     return { ok: false, status: "error", reason: `browser: ${err?.message || err}` };
   }

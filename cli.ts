@@ -36,6 +36,8 @@ Commands:
   intent "<text>"             Score buying intent of a post/comment (pt-BR + EN).
   social-lookup <url>         Public profile meta tags (Instagram, LinkedIn, X); no login.
   intent-search "<query>"     Reddit buying-intent search (public .json, no key).
+  tiktok profile @handle      Recent videos of a public TikTok profile (yt-dlp, then a clean browser).
+  tiktok trends               TikTok Creative Center trends for a region (headless browser).
   daemon <start|stop|status>  Manage the Maps scraper web-mode daemon (127.0.0.1 only).
   serve                       Start the MCP server (stdio or SSE HTTP transport).
   --help, -h                  Show this help text.
@@ -115,6 +117,15 @@ Options for 'antislop' / 'intent':
 Options for 'intent-search':
   --subreddit <name>          Restrict to one subreddit.
   --limit <n>                 Maximum posts (default: 5, max 25).
+
+Options for 'tiktok':
+  --limit <n>                 profile: maximum videos (default: 20, max 100).
+  --region <CC>               trends: two-letter region (default: BR).
+  --period <7|30>             trends: days (default: 7).
+  --kind <hashtag|video>      trends: list kind (default: hashtag). song/creator are not
+                              published by Creative Center without login.
+                              Output: {ok:true,source,items} or {ok:false,status:"blocked"|"error",reason};
+                              exit code 1 when ok is false.
 
 Options for 'daemon':
   --port <n>                  Daemon port (default: 8088).
@@ -685,6 +696,24 @@ async function runCli() {
     return;
   }
 
+  if (command === "tiktok") {
+    const tt = await import("./tiktok.js");
+    const [sub, target = ""] = positionalUrls;
+    const result =
+      sub === "profile"
+        ? await tt.tiktokProfile(target, { limit: Number(getOption(args, "--limit")) || undefined })
+        : sub === "trends"
+          ? await tt.tiktokTrends({
+              region: getOption(args, "--region"),
+              period: getOption(args, "--period") ? Number(getOption(args, "--period")) : undefined,
+              kind: getOption(args, "--kind") as any,
+            })
+          : { ok: false as const, status: "error" as const, reason: "usage: lookacrawler tiktok profile @handle [--limit N] | tiktok trends [--region BR] [--period 7|30] [--kind hashtag|video]" };
+    await emitJson(args, result, "TikTok output");
+    if (!result.ok) process.exit(1);
+    return;
+  }
+
   if (command === "daemon") {
     const { getMapsDaemonStatus, startMapsDaemon, stopMapsDaemon } = await import("./maps-daemon.js");
     const sub = positionalUrls[0];
@@ -826,6 +855,8 @@ function getPositionalArgs(args: string[], command: string): string[] {
     "--locale",
     "--name",
     "--subreddit",
+    "--period",
+    "--kind",
   ]);
 
   const positional: string[] = [];
