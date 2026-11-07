@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tiktok profile @handle [--limit N]` and `tiktok trends [--region BR] [--period 7|30]
+  [--kind hashtag|video]`, also as MCP tools `tiktok_profile` / `tiktok_trends`.
+  Profiles come from `yt-dlp --flat-playlist`, falling back to a plain headless
+  Chromium that reads the page's own `item_list` / rehydration JSON. Trends come
+  from the Creative Center page's own list response. One envelope for both:
+  `{ok, source, items}` or `{ok:false, status:"blocked"|"error", reason}`;
+  403/429/CAPTCHA is `blocked` and never retried. No stealth patches, no login.
+  Spec and measurements: `docs/specs/tiktok.md`.
 - `social fb-posts` reads each post's top-level comments from its permalink
   (`{author, text, date, url}`, `date` is Facebook's relative age, max 30 per post).
   It switches the order to "Todos os comentários" and scrolls the post dialog (or presses
