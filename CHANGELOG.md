@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Optional TypeSafe System One (Jev) judgments, on only when `TYPESAFE_API_KEY`
+  (or the macOS Keychain item `typesafe`) is set; `LOOKACRAWLER_JEV=off` disables
+  them. `gtm` asks one batched question per run and skips Maps results outside
+  the niche (suppliers, schools, associations) before crawling them; skipped
+  leads are listed in `skipped`. Enrichment lets Jev pick the decision maker
+  among names found on the page, or none. Every failure falls back to the
+  deterministic path.
+
+### Fixed
+- Decision-maker names with accents ("Dra. Marta Lúcia", "Dr. João") were never
+  matched by the person regex.
+
 - `audit <url>` / `audit_company_website`: deterministic SEO checklist, conversion
   channels (WhatsApp, phone, email, booking, form), services and a digital
   maturity score. No paid API.
