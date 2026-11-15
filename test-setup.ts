@@ -7,6 +7,8 @@ setDefaultTimeout(20_000);
 // Hermetic tests: never touch the real on-disk cache (clearCache() would wipe it,
 // and the spawned MCP server inherits this env so it gets its own in-memory DB).
 process.env.LOOKACRAWLER_DB_PATH = ":memory:";
+// No real Jev calls (this machine has a Keychain key); Jev paths take an injected ask.
+process.env.LOOKACRAWLER_JEV = "off";
 
 // No real DNS: every hostname resolves to a public documentation IP, except
 // *.private-test which resolves to RFC 1918 space for SSRF tests.

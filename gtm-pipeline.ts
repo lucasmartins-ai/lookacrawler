@@ -12,6 +12,7 @@ import { deepEnrichLead, type EnrichedLeadResult } from "./enrichment-bridge.js"
 import { extractDomain, type Locale } from "./competitor-intelligence.js";
 import { lintAntiSlop } from "./anti-slop-linter.js";
 import { toSafeCsv } from "./csv-safe.js";
+import { jevAsk, type JevAsk } from "./jev.js";
 
 export type Channel = "WHATSAPP" | "EMAIL" | "INSTAGRAM_DM" | "PHONE";
 
@@ -27,6 +28,10 @@ export interface GtmOptions {
   concurrency?: number;
   /** Lead source; defaults to the Maps scraper. Injectable so tests stay offline. */
   discover?: (query: string, opts: { limit: number }) => Promise<{ data: GoogleMapsLead[]; total: number }>;
+  /** Skip leads Jev judges outside the niche before crawling them (default on; no-op without a key). */
+  nicheGate?: boolean;
+  /** Jev judgment function; injectable so tests stay offline. */
+  ask?: JevAsk;
 }
 
 export interface GtmItem {
@@ -58,6 +63,45 @@ export interface GtmResult {
   totalEnriched: number;
   durationMs: number;
   items: GtmItem[];
+  /** Leads dropped by the niche gate: not crawled, no draft. */
+  skipped: { title: string; category?: string; nicheFit: number }[];
+}
+
+// ponytail: one request for the whole batch (fine for tens of leads); chunk it if limits grow.
+// 0.2 is a starting cut: calibrate against reviewed leads in the Jev ledger.
+const NICHE_MISS = 0.2;
+
+/** Splits Maps results into leads worth crawling and clear niche misses. Fails open. */
+export async function splitByNiche(
+  leads: GoogleMapsLead[],
+  niche: string,
+  location: string | undefined,
+  ask: JevAsk = jevAsk
+): Promise<{ keep: GoogleMapsLead[]; skipped: GtmResult["skipped"] }> {
+  if (leads.length === 0) return { keep: leads, skipped: [] };
+  const questions = Object.fromEntries(
+    leads.map((_, i) => [
+      `fit_${i}`,
+      {
+        type: "noul" as const,
+        instructions: `Is \`leads[${i}]\` a business of the kind described by \`search.niche\`, as opposed to a place that only matched the search words (a supplier to that kind of business, a school, an association, or something unrelated)?`,
+      },
+    ])
+  );
+  const answers = await ask(
+    "lookacrawler_niche_fit",
+    { search: { niche, location: location ?? "any" }, leads: leads.map((l) => ({ name: l.title, category: l.category ?? "unknown" })) },
+    questions
+  );
+  if (!answers) return { keep: leads, skipped: [] };
+  const keep: GoogleMapsLead[] = [];
+  const skipped: GtmResult["skipped"] = [];
+  leads.forEach((lead, i) => {
+    const fit = answers[`fit_${i}`]?.noul;
+    if (typeof fit === "number" && fit < NICHE_MISS) skipped.push({ title: lead.title, category: lead.category, nicheFit: fit });
+    else keep.push(lead);
+  });
+  return { keep, skipped };
 }
 
 // Drafts exist in pt-BR and English only: Portuguese for BR/PT, English elsewhere.
@@ -126,7 +170,11 @@ export async function runGtmPipeline(options: GtmOptions): Promise<GtmResult> {
   const concurrency = Math.max(1, Math.min(5, options.concurrency ?? 3));
 
   const found = await (options.discover ?? discoverLocalLeads)(query, { limit });
-  const leads = found.data.slice(0, limit);
+  const ask = options.ask ?? jevAsk;
+  const { keep: leads, skipped } =
+    options.nicheGate === false
+      ? { keep: found.data.slice(0, limit), skipped: [] }
+      : await splitByNiche(found.data.slice(0, limit), options.niche, options.location, ask);
 
   let enriched = 0;
   const items: GtmItem[] = new Array(leads.length);
@@ -138,7 +186,7 @@ export async function runGtmPipeline(options: GtmOptions): Promise<GtmResult> {
         const raw = leads[i];
         let lead = bareLead(raw);
         if (raw.web_site?.startsWith("http")) {
-          lead = await deepEnrichLead(raw, { mode: options.mode ?? "fast" });
+          lead = await deepEnrichLead(raw, { mode: options.mode ?? "fast" }, ask);
           if (lead.enrichmentSuccess) enriched++;
         }
         const o = draftOutreach(lead, raw, { niche: options.niche, location: options.location, offer: options.offer, locale: options.locale });
@@ -168,7 +216,7 @@ export async function runGtmPipeline(options: GtmOptions): Promise<GtmResult> {
     })
   );
 
-  return { query, totalDiscovered: found.total, totalEnriched: enriched, durationMs: Date.now() - start, items };
+  return { query, totalDiscovered: found.total, totalEnriched: enriched, durationMs: Date.now() - start, items, skipped };
 }
 
 const CSV_HEADERS = ["title", "domain", "website", "address", "phone", "whatsapp", "emails", "decisionMakers", "instagram", "linkedin", "facebook", "rating", "reviews", "channel", "destination", "locale", "slopScore", "outreachCopy", "error"];
