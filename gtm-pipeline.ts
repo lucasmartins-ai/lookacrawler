@@ -68,8 +68,10 @@ export interface GtmResult {
 }
 
 // ponytail: one request for the whole batch (fine for tens of leads); chunk it if limits grow.
-// 0.2 is a starting cut: calibrate against reviewed leads in the Jev ledger.
-const NICHE_MISS = 0.2;
+// One run on 2026-11-16 over 179 real Maps leads (160 Goiás, 8 niches + 19 Bristol dentists) and
+// 8 synthetic: every clear miss scored <= 0.24, every real business >= 0.45. Tuned on that same
+// set, mostly positives: re-check against reviewed runs before raising it.
+const NICHE_MISS = 0.3;
 
 /** Splits Maps results into leads worth crawling and clear niche misses. Fails open. */
 export async function splitByNiche(
@@ -84,7 +86,9 @@ export async function splitByNiche(
       `fit_${i}`,
       {
         type: "noul" as const,
-        instructions: `Is \`leads[${i}]\` a business of the kind described by \`search.niche\`, as opposed to a place that only matched the search words (a supplier to that kind of business, a school, an association, or something unrelated)?`,
+        // "supplier" must not be an exclusion: Google labels solar installers "Fornecedor de
+        // equipamentos a energia solar", and the old wording scored 9 real ones 0.03-0.17.
+        instructions: `Does \`leads[${i}]\` itself do or sell what \`search.niche\` describes, to that niche's customers? A Google category like "Fornecedor de X" or "X supplier" usually means a company that sells or installs X, which counts. Answer no only for a clearly different kind of place that matched the words: a shop of related goods when the niche is a service, a school or course, an association, a public place, or something unrelated.`,
       },
     ])
   );
