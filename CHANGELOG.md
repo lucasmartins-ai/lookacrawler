@@ -11,15 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional TypeSafe System One (Jev) judgments, on only when `TYPESAFE_API_KEY`
   (or the macOS Keychain item `typesafe`) is set; `LOOKACRAWLER_JEV=off` disables
   them. `gtm` asks one batched question per run and skips Maps results outside
-  the niche (suppliers, schools, associations) before crawling them; skipped
-  leads are listed in `skipped`. Enrichment lets Jev pick the decision maker
-  among names found on the page, or none. Every failure falls back to the
-  deterministic path.
-
-### Fixed
-- Decision-maker names with accents ("Dra. Marta Lúcia", "Dr. João") were never
-  matched by the person regex.
-
+  the niche (shops of related goods, schools, associations, public places)
+  before crawling them; skipped leads are listed in `skipped`. Enrichment lets
+  Jev pick the decision maker among names found on the page, or none. Every
+  failure falls back to the deterministic path.
 - `audit <url>` / `audit_company_website`: deterministic SEO checklist, conversion
   channels (WhatsApp, phone, email, booking, form), services and a digital
   maturity score. No paid API.
@@ -39,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `stop` only signals a PID it recorded and only while the port still answers.
 
 ### Fixed
+
+- `gtm` niche gate no longer treats "supplier" as a miss: Google labels solar
+  installers "Fornecedor de equipamentos a energia solar", and 9 real ones
+  scored 0.03-0.17. Cut moved from 0.2 to 0.3 after one scoring run over 179 real Maps leads.
+- Decision-maker names with accents ("Dra. Marta Lúcia", "Dr. João") were never
+  matched by the person regex.
 
 - `extract` failed intermittently with "Extraction error: disk I/O error"
   (`SQLITE_IOERR_VNODE`). On macOS something hard-links the `-wal`/`-shm` files
