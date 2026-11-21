@@ -1,5 +1,4 @@
 import type { Browser } from "playwright";
-import { chromium } from "playwright";
 import { buildStealthInit } from "./stealth.js";
 import { getEgressGuard } from "./egress-guard.js";
 import { isLocalAccessAllowed, validateProxyUrl } from "./security.js";
@@ -166,8 +165,25 @@ export async function getBrowser(proxy?: string): Promise<Browser> {
   return browser;
 }
 
+/**
+ * Playwright is loaded on first browser use, never at startup: the compiled
+ * binary keeps it external, and a static import would make every command
+ * (even --version) fail where Playwright is not installed.
+ */
+export async function loadChromium(): Promise<typeof import("playwright").chromium> {
+  try {
+    return (await import("playwright")).chromium;
+  } catch (err) {
+    throw new Error(
+      "This needs a browser (deep mode), but Playwright was not found. Run `npm i playwright && npx playwright install chromium` " +
+        `in the working directory, set NODE_PATH to a node_modules that has it, or use mode "fast". (${err instanceof Error ? err.message : String(err)})`.slice(0, 500)
+    );
+  }
+}
+
 /** Try real Chrome first; degrade to bundled Chromium if the channel is unavailable. */
 async function launchWithFallback(proxy: LaunchProxy | undefined, baseArgs: string[]): Promise<Browser> {
+  const chromium = await loadChromium();
   const launch = (extra: Record<string, unknown>) => {
     const opts: any = {
       headless: true,

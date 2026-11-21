@@ -114,6 +114,16 @@ cd lookacrawler
 bun install
 ```
 
+#### Single binary (no Bun needed)
+
+Tagged releases attach `lookacrawler-darwin-arm64` and `lookacrawler-linux-x64`
+(with `SHA256SUMS`). Build them yourself with `bun run build:darwin-arm64` or
+`bun run build:linux-x64` (output in `dist/`). Fast mode, `map`, `crawl`,
+`contacts`, `serve` and `init` work from the binary alone. Playwright is not
+bundled: deep mode needs `npm i playwright && npx playwright install chromium`
+in the working directory (or `NODE_PATH` pointing at a `node_modules` that has
+it), and says so when it is missing.
+
 ### 2. CLI Commands
 
 ```bash

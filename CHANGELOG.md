@@ -58,6 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   0600) and replaced atomically; files that do not parse, already have a
   `lookacrawler` entry, or change during the run are left untouched. The dry run
   prints only the added lines, never the rest of the config.
+- Single-file binaries: `bun run build:darwin-arm64` / `build:linux-x64`
+  (`scripts/build-binary.ts`, `bun build --compile` with minify), a tag-triggered
+  `release.yml` that attaches both plus `SHA256SUMS`, and a CI step that builds
+  the linux-x64 binary and runs `--version`, `init --dry-run` and `extract`
+  outside the repo. Measured on an M-series Mac (6 runs, `/usr/bin/time -l`,
+  warm runs, cold first run excluded): darwin-arm64 binary 73 MB, linux-x64
+  104 MB; `--version` 0.15 s / 70 MB RSS (via `bun cli.ts`: 0.02 s / 31 MB);
+  `extract https://example.com` 0.53 s / 162 MB (via `bun cli.ts`: 0.70 s /
+  176 MB).
 - `tiktok profile @handle [--limit N]` and `tiktok trends [--region BR] [--period 7|30]
   [--kind hashtag|video]`, also as MCP tools `tiktok_profile` / `tiktok_trends`.
   Profiles come from `yt-dlp --flat-playlist`, falling back to a plain headless
@@ -106,6 +115,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README comparison table: Firecrawl pricing and MCP rows corrected from the
   pricing page and the firecrawl-mcp-server README (checked 2026-11-21), with
   links; the old "$16 to $99+/month" and "Community Wrapper" were out of date.
+- Playwright is imported on first browser use instead of at module load
+  (`loadChromium()` in `browser-manager.ts`, also used by `tiktok.ts`). With a
+  static import every command, `--version` included, crashed wherever
+  Playwright was not installed; deep mode now fails with install instructions.
 - `social fb-posts` / `fb-search` read the 10/2026 Facebook layout. Post body from
   `[data-ad-rendering-role=story_message]` (fallback `[data-ad-preview=message]`),
   permalink from the bare timestamp link that Facebook fills on hover (search:
