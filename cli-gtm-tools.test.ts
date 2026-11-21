@@ -2,9 +2,14 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+// Other test files set LOOKACRAWLER_ALLOW_LOCAL in this process; a child that inherits it lets the
+// private-host check through and the audit test connects to 127.0.0.1:9 (hung 15 s on CI, 21/11/2026).
+const { LOOKACRAWLER_ALLOW_LOCAL: _allowLocal, ...childEnv } = process.env;
+
 const cli = async (args: string[], stdin?: string) => {
   const proc = Bun.spawn(["bun", "run", "cli.ts", ...args], {
     cwd: import.meta.dir,
+    env: childEnv,
     stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
     stdout: "pipe",
     stderr: "pipe",
