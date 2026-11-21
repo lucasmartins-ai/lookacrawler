@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `additionalPhones` arrays are unchanged. Values a lead arrived with (Maps
   listing or caller input) point at the Maps `link`, or `"input"`; values read
   from cached markdown carry the cache time, not the request time.
+- Firecrawl v2-compatible routes on the SSE server: `POST /v2/scrape`,
+  `POST /v2/map`, `POST /v2/crawl` and `GET /v2/crawl/:id`, so a Firecrawl SDK
+  pointed at `http://127.0.0.1:<port>` works unchanged (checked with the
+  `firecrawl` JS SDK 4.52.0). Same bearer token, Origin/Host checks and egress
+  guard as the MCP endpoints. Fields lookacrawler cannot honour (screenshots,
+  subdomains, regex paths, geo location, robots.txt compliance) get a `400`
+  naming the field instead of being ignored. Code in `v2-api.ts`.
 - `tiktok profile @handle [--limit N]` and `tiktok trends [--region BR] [--period 7|30]
   [--kind hashtag|video]`, also as MCP tools `tiktok_profile` / `tiktok_trends`.
   Profiles come from `yt-dlp --flat-playlist`, falling back to a plain headless

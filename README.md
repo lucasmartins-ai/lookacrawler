@@ -207,6 +207,33 @@ edges follow your location rather than the proxy's, and SOCKS4 cannot reach
 IPv6-only sites. `LOOKACRAWLER_ALLOW_LOCAL=true` turns all of this off and talks
 to the proxy directly (for local development only).
 
+#### Firecrawl v2-compatible API
+
+The SSE server also answers `POST /v2/scrape`, `POST /v2/map`, `POST /v2/crawl`
+and `GET /v2/crawl/:id` in Firecrawl's v2 shapes, behind the same token and
+egress guard. Point a Firecrawl SDK at it:
+
+```js
+import { Firecrawl } from "firecrawl";
+const app = new Firecrawl({ apiUrl: "http://127.0.0.1:3000", apiKey: process.env.LOOKACRAWLER_SSE_TOKEN });
+const doc = await app.scrape("https://example.com", { formats: ["markdown", "links"] });
+```
+
+Only what lookacrawler can honour is accepted; anything else gets a `400` that
+names the field, never a silent no-op:
+
+- Formats: `markdown` and `links`. No screenshots, HTML, JSON extraction or summaries.
+- `proxy`: `basic`/`auto` fetch over HTTP (`auto` already escalates to the browser
+  on anti-bot pages); `stealth`/`enhanced`, `waitFor` and `actions` (`wait`,
+  `click`, `scroll`) use the browser.
+- Map covers one host (`includeSubdomains: false`), sitemap plus home-page links;
+  `search` ranks matching URLs first; `limit` up to 5,000.
+- Crawl `limit` up to 100 pages, `maxDiscoveryDepth` up to 5, at most 2 crawls
+  running. `includePaths`/`excludePaths` are lookacrawler substring patterns
+  (`*` wildcard), not regexes. robots.txt is not read yet, so a crawl only accepts
+  `ignoreRobotsTxt` when it is `true`. Jobs live in memory for an hour.
+- No `/v2/search`, batch scrape, crawl cancel, `location` or v0/v1 routes.
+
 ### 3. Google Maps engine (optional)
 
 The `maps` command, `daemon`, `gtm`, `intel` and the `discover_local_leads` MCP
