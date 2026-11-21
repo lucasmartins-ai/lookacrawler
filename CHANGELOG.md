@@ -15,7 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The old docs said robots was respected, but only `Sitemap` lines were read.
   Results gain `robots` (`applied` / `none` / `unreachable` / `ignored`) and
   `skippedByRobots`. A 404 means no rules; a 429, 5xx or timeout means nothing
-  is fetched (RFC 9309 §2.3.1.4). Opt out with `--ignore-robots` or
+  is fetched (RFC 9309 §2.3.1.4). Paths are compared with percent-escapes
+  normalized. Fast mode also refuses a redirect into a disallowed path (deep
+  mode's browser follows redirects itself). The start URL's robots.txt
+  governs that host on both schemes. Opt out with `--ignore-robots` or
   `ignore_robots: true`. Single-URL `extract` is unaffected.
 - The fast-to-stealth-browser escalation on an anti-bot block is now opt-in
   through `LOOKACRAWLER_AUTO_STEALTH=1`. The CLI sets it by default, because

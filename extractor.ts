@@ -44,6 +44,8 @@ export interface FastExtractOptions {
   maxRetries?: number;
   linkFormat?: LinkFormat;
   imageMode?: ImageMode;
+  /** Veto a redirect hop before it is fetched (crawl passes its robots.txt check). */
+  allowRedirect?: (url: string) => boolean;
 }
 
 export interface DeepExtractOptions {
@@ -146,6 +148,8 @@ export interface FetchedDocument {
   text: string;
   bytes: Buffer;
   contentType: string;
+  /** URL after redirects: the page the text actually came from (always set by fetchDocument). */
+  url?: string;
 }
 
 const PLAIN_TEXT_TYPES = new Set(["text/plain", "text/markdown", "text/x-markdown"]);
@@ -261,6 +265,14 @@ type FetchOptions = {
   headers?: Record<string, string>;
   cookies?: Record<string, string>;
   proxy?: string;
+  /** Veto a redirect hop before it is fetched (crawl passes its robots.txt check). */
+  allowRedirect?: (url: string) => boolean;
+  /**
+   * Scan the body for challenge-page text (default true). robots.txt turns it
+   * off: a comment mentioning "cf-turnstile" is not a bot wall, and a 502 must
+   * stay a 502 instead of becoming a status-less anti-bot error.
+   */
+  scanChallenge?: boolean;
 };
 
 /**
@@ -337,6 +349,9 @@ export async function fetchDocument(url: string, options: FetchOptions = {}): Pr
       if (!location || redirect === 5) throw new Error(`HTTP ${response.status}: redirect limit exceeded`);
       await response.body?.cancel().catch(() => {});
       const nextUrl = new URL(location, currentUrl).toString();
+      if (options.allowRedirect && !options.allowRedirect(nextUrl)) {
+        throw new Error(`Redirect to ${nextUrl} is disallowed by robots.txt`);
+      }
       await validateTargetUrl(nextUrl).catch((err) => {
         // The lead's own domain answered; a redirect to a dead host is not a dead lead.
         if (classifyFailure(err) !== "dead_domain") throw err;
@@ -365,7 +380,7 @@ export async function fetchDocument(url: string, options: FetchOptions = {}): Pr
     // ponytail: PDFs skip charset decoding and the anti-bot text scan; their bytes are not markup.
     const htmlText = isPdf ? "" : decodeHtml(bytes, contentType);
 
-    const antiBotCheck: AntiBotCheckResult = detectAntiBot(response.status, htmlText);
+    const antiBotCheck: AntiBotCheckResult = detectAntiBot(response.status, options.scanChallenge === false ? "" : htmlText);
     if (antiBotCheck.isBlocked) {
       throw new Error(`Anti-Bot protection triggered: ${antiBotCheck.reason}`);
     }
@@ -374,7 +389,7 @@ export async function fetchDocument(url: string, options: FetchOptions = {}): Pr
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    return { text: htmlText, bytes, contentType };
+    return { text: htmlText, bytes, contentType, url: currentUrl };
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw new Error(`Request timed out after ${timeoutMs}ms`);
@@ -641,7 +656,9 @@ export function autoStealthEnabled(): boolean {
 
 /** Message on an anti-bot failure that was not escalated, so callers know the switch. */
 export function withEscalationHint(error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error);
+  let message = error instanceof Error ? error.message : String(error);
+  // "HTTP 401: Just a moment" must still classify as anti_bot, not http_error.
+  if (!/Anti-Bot protection/i.test(message)) message = `Anti-Bot protection triggered: ${message}`;
   return new Error(`${message} (not retried in the stealth browser; set LOOKACRAWLER_AUTO_STEALTH=1 or use mode "deep")`);
 }
 
@@ -659,14 +676,14 @@ export function extractFast(options: FastExtractOptions): Promise<string> {
 }
 
 async function extractFastOnce(options: FastExtractOptions): Promise<string> {
-  const { url, cssSelector, timeoutMs, headers, cookies, proxy, maxRetries = 3, linkFormat, imageMode } = options;
+  const { url, cssSelector, timeoutMs, headers, cookies, proxy, maxRetries = 3, linkFormat, imageMode, allowRedirect } = options;
 
   recordMetric("requests");
   const startedAt = Date.now();
   try {
     const result = await retryWithBackoff(
     async () => {
-      const doc = await fetchDocument(url, { timeoutMs, headers, cookies, proxy });
+      const doc = await fetchDocument(url, { timeoutMs, headers, cookies, proxy, allowRedirect });
       return documentToMarkdown(doc, { url, cssSelector, linkFormat, imageMode });
     },
     { maxRetries }

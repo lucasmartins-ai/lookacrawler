@@ -164,7 +164,7 @@ function bareLead(raw: GoogleMapsLead): EnrichedLeadResult {
     website: raw.web_site, rating: raw.review_rating, reviews: raw.review_count,
     emails: raw.emails ? [...raw.emails] : [], socialLinks: {}, additionalPhones: [], decisionMakers: [],
     markdownSummary: "", estimatedTokens: 0, sourcePagesCrawled: [], enrichmentSuccess: false,
-    evidence: mapsEvidence(raw, raw.emails ?? [], new Date().toISOString()),
+    evidence: mapsEvidence(raw, [...new Set(raw.emails ?? [])], new Date().toISOString()),
   };
 }
 

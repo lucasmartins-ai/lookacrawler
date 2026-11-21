@@ -146,6 +146,7 @@ export async function mapWebsite(options: MapWebsiteOptions): Promise<MapWebsite
     }
     return true;
   };
+  const allowRedirect = obeyRobots ? robots.isAllowed : undefined;
 
   // Fallback to default sitemap.xml if none detected
   if (sitemapsFound.length === 0) {
@@ -155,9 +156,11 @@ export async function mapWebsite(options: MapWebsiteOptions): Promise<MapWebsite
   // 2. Fetch and parse sitemaps
   for (const sitemapUrl of sitemapsFound) {
     if (discoveredMap.size >= maxLimit) break;
+    // Covers the /sitemap.xml fallback when robots.txt disallows it or was unreachable.
+    if (obeyRobots && !robots.isAllowed(sitemapUrl)) continue;
     try {
       await validateTargetUrl(sitemapUrl);
-      const xmlContent = await fetchHtml(sitemapUrl, { timeoutMs });
+      const xmlContent = await fetchHtml(sitemapUrl, { timeoutMs, allowRedirect });
       const locRegex = /<loc>\s*(https?:\/\/[^<\s]+)\s*<\/loc>/gi;
       const lastmodRegex = /<lastmod>\s*([^<\s]+)\s*<\/lastmod>/i;
 
@@ -186,9 +189,11 @@ export async function mapWebsite(options: MapWebsiteOptions): Promise<MapWebsite
   }
 
   // 3. If sitemaps yielded few links, parse links from root HTML page
-  if (discoveredMap.size < 10 && (!obeyRobots || robots.isAllowed(url))) {
+  const homeAllowed = !obeyRobots || robots.isAllowed(url);
+  if (!homeAllowed) skippedByRobots.add(url);
+  if (discoveredMap.size < 10 && homeAllowed) {
     try {
-      const homeHtml = await fetchHtml(url, { timeoutMs });
+      const homeHtml = await fetchHtml(url, { timeoutMs, allowRedirect });
       const dom = new JSDOM(homeHtml, { url });
       const anchors = Array.from(dom.window.document.querySelectorAll("a[href]"));
 
@@ -279,7 +284,9 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
   const targetHost = new URL(startUrl).hostname;
 
   const passesFilter = makeUrlFilter(targetHost, includePatterns, excludePatterns);
-  const robots = await loadRobots(new URL(startUrl).origin, { ignore: ignoreRobots });
+  const robots = await loadRobots(new URL(startUrl).origin, { ignore: ignoreRobots, headers, cookies, proxy });
+  // Fast mode checks each redirect hop too; deep mode's browser follows redirects on its own.
+  const allowRedirect = ignoreRobots ? undefined : robots.isAllowed;
   const skippedByRobots = new Set<string>();
   const isUrlAllowed = (candidate: string): boolean => {
     if (!passesFilter(candidate)) return false;
@@ -319,6 +326,7 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
           proxy,
           linkFormat,
           imageMode,
+          allowRedirect,
         });
       }
 
@@ -345,7 +353,7 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
           if (hrefs.length === 0 && linkFormat === "strip") {
             // `strip` removes URLs by design; the page may still be worth
             // one extra fetch if it has no other way to expose its links.
-            const html = await fetchHtml(currentUrl, { timeoutMs: 5000, headers, cookies, proxy });
+            const html = await fetchHtml(currentUrl, { timeoutMs: 5000, headers, cookies, proxy, allowRedirect });
             const dom = new JSDOM(html, { url: currentUrl });
             hrefs = Array.from(dom.window.document.querySelectorAll("a[href]"))
               .map((a) => a.getAttribute("href") || "");

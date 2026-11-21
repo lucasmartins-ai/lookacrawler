@@ -1,6 +1,6 @@
 import { JSDOM } from "jsdom";
 import type { CountryCode } from "libphonenumber-js";
-import { fetchHtml } from "./extractor.js";
+import { fetchDocument } from "./extractor.js";
 import { validateTargetUrl } from "./security.js";
 import { normalizePhone, findPhones, type NormalizedPhone, type PhoneType } from "./quality/phone.js";
 import { cleanEmail, findEmails } from "./quality/email.js";
@@ -72,6 +72,8 @@ export interface ExtractContactsOptions {
   proxy?: string;
   /** Already-fetched HTML of `url`; skips the root fetch when provided. */
   html?: string;
+  /** When `html` was fetched (ISO). Without it, evidence from `html` is stamped with the call time. */
+  observedAt?: string;
   /** Region used to read numbers without a country code. Defaults to "BR". */
   defaultRegion?: CountryCode;
   /** Contact subpages to visit when deepScan is on. Defaults to 3. */
@@ -109,6 +111,7 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
     cookies,
     proxy,
     html,
+    observedAt,
     defaultRegion = "BR",
     maxSubpages = 3,
   } = options;
@@ -119,11 +122,18 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
 
   // 1. Fetch & scan root HTML
   try {
-    const rootHtml = html ?? (await fetchHtml(url, { timeoutMs, headers, cookies, proxy }));
-    const rootObservedAt = new Date().toISOString();
-    const root = parseContactsFromHtml(rootHtml, parsedRoot, { defaultRegion });
+    let rootHtml = html;
+    let rootPage = parsedRoot.toString();
+    let rootObservedAt = observedAt ?? new Date().toISOString();
+    if (rootHtml === undefined) {
+      const doc = await fetchDocument(url, { timeoutMs, headers, cookies, proxy });
+      rootHtml = doc.text;
+      rootPage = doc.url ?? rootPage; // evidence names the page after redirects
+      rootObservedAt = new Date().toISOString();
+    }
+    const root = parseContactsFromHtml(rootHtml, parsedRoot, { pageUrl: rootPage, defaultRegion });
     // Same spelling the parser stamps on phones (`ContactPhone.url`).
-    merged.add(root, parsedRoot.toString(), rootObservedAt);
+    merged.add(root, rootPage, rootObservedAt);
 
     // 2. Visit the best-ranked contact subpages if deepScan is enabled
     if (deepScan) {
@@ -132,9 +142,10 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
         subpagesToVisit.map(async (subUrl) => {
           try {
             await validateTargetUrl(subUrl);
-            const subHtml = await fetchHtml(subUrl, { timeoutMs: 8000, headers, cookies, proxy });
+            const doc = await fetchDocument(subUrl, { timeoutMs: 8000, headers, cookies, proxy });
+            const pageUrl = doc.url ?? subUrl;
             const observedAt = new Date().toISOString();
-            return { subUrl, observedAt, found: parseContactsFromHtml(subHtml, parsedRoot, { pageUrl: subUrl, defaultRegion }) };
+            return { subUrl, pageUrl, observedAt, found: parseContactsFromHtml(doc.text, parsedRoot, { pageUrl, defaultRegion }) };
           } catch {
             return null; /* ignore subpage failure */
           }
@@ -144,7 +155,7 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
       for (const page of pages) {
         if (!page) continue;
         merged.scanned.push(page.subUrl);
-        merged.add(page.found, page.subUrl, page.observedAt);
+        merged.add(page.found, page.pageUrl, page.observedAt);
       }
     }
   } catch (err: any) {

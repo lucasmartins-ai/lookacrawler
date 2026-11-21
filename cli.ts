@@ -207,6 +207,9 @@ async function runCli() {
 
   const command = args[0];
 
+  // --no-escalate also reaches `serve`; the CLI-only default (below) does not.
+  if (args.includes("--no-escalate")) process.env.LOOKACRAWLER_AUTO_STEALTH = "0";
+
   if (command === "serve") {
     // Forward to index.ts server
     await import("./index.js");
@@ -214,8 +217,7 @@ async function runCli() {
   }
 
   // ponytail: one env var gates both escalation sites (extractFast, enrich's home fetch).
-  if (args.includes("--no-escalate")) process.env.LOOKACRAWLER_AUTO_STEALTH = "0";
-  else process.env.LOOKACRAWLER_AUTO_STEALTH ??= "1";
+  process.env.LOOKACRAWLER_AUTO_STEALTH ??= "1";
 
   const positionalUrls = getPositionalArgs(args, command);
 

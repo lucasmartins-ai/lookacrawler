@@ -1,5 +1,4 @@
 import { fetchHtml } from "./extractor.js";
-import { classifyFailure } from "./errors.js";
 
 /**
  * robots.txt (RFC 9309) for `crawl` and `map`. Single-URL `extract` is a user
@@ -47,6 +46,22 @@ export function robotsPatternMatches(pattern: string, path: string): boolean {
   return !anchored || at === path.length;
 }
 
+const UNRESERVED = /[A-Za-z0-9\-._~]/;
+
+/**
+ * RFC 9309 §2.2.2: compare paths with unreserved characters decoded, other
+ * escapes upper-cased and raw non-ASCII percent-encoded, so `/%70rivate`
+ * meets `Disallow: /private`.
+ */
+export function normalizeRobotsPath(value: string): string {
+  return value
+    .replace(/[^\x00-\x7f]/gu, (c) => encodeURIComponent(c))
+    .replace(/%[0-9a-f]{2}/gi, (esc) => {
+      const ch = String.fromCharCode(parseInt(esc.slice(1), 16));
+      return UNRESERVED.test(ch) ? ch : esc.toUpperCase();
+    });
+}
+
 /** Parse robots.txt and pick the rules that apply to `agent` (default: our token). */
 export function parseRobots(txt: string, agent = ROBOTS_PRODUCT_TOKEN): { rules: Rule[]; sitemaps: string[] } {
   const groups: Array<{ agents: string[]; rules: Rule[] }> = [];
@@ -55,7 +70,9 @@ export function parseRobots(txt: string, agent = ROBOTS_PRODUCT_TOKEN): { rules:
   let lastWasAgent = false;
 
   for (const rawLine of txt.split(/\r?\n|\r/)) {
-    const line = rawLine.replace(/#.*$/, "").trim();
+    // indexOf, not /#.*$/: that regex rescans the suffix at every "#" when the line holds a U+2028.
+    const hash = rawLine.indexOf("#");
+    const line = (hash >= 0 ? rawLine.slice(0, hash) : rawLine).trim();
     const colon = line.indexOf(":");
     if (colon < 0) continue;
     const key = line.slice(0, colon).trim().toLowerCase();
@@ -70,12 +87,13 @@ export function parseRobots(txt: string, agent = ROBOTS_PRODUCT_TOKEN): { rules:
     } else if (key === "allow" || key === "disallow") {
       lastWasAgent = false;
       // An empty Disallow allows everything; rules outside a group are ignored.
-      if (current && value) current.rules.push({ allow: key === "allow", pattern: value });
+      // The RFC grammar wants a leading "/"; a leading "*" is kept because
+      // `Disallow: *` plainly means "everything" (Google reads it that way too).
+      if (current && /^[/*]/.test(value)) current.rules.push({ allow: key === "allow", pattern: normalizeRobotsPath(value) });
     } else if (key === "sitemap") {
       if (/^https?:\/\//i.test(value) && !sitemaps.includes(value)) sitemaps.push(value);
-    } else {
-      lastWasAgent = false;
     }
+    // Other records (Crawl-delay, Host, ...) neither open nor close a group.
   }
 
   const token = agent.toLowerCase();
@@ -119,7 +137,7 @@ export function robotsFromText(origin: string, txt: string): Robots {
       if (path === null) return false;
       // Same host on either scheme is governed by these rules: we never fetch a second robots.txt.
       if (new URL(url).hostname !== host || path === "/robots.txt") return true;
-      return isPathAllowed(rules, path);
+      return isPathAllowed(rules, normalizeRobotsPath(path));
     },
   };
 }
@@ -128,22 +146,31 @@ const ALLOW_ALL = (state: RobotsState): Robots => ({ state, sitemaps: [], isAllo
 
 /**
  * Fetch and parse `<origin>/robots.txt`.
- *  - 4xx other than 429, or a 200 challenge page: no usable rules, allow all.
+ *  - 4xx other than 429: no rules, allow all. A 200 HTML page (SPA shell,
+ *    challenge page) has no rules either (see robotsFromText).
  *  - 429, 5xx, timeout, connection failure: RFC 9309 §2.3.1.4 says assume
  *    complete disallow, so nothing is crawled and the result says "unreachable".
  */
-export async function loadRobots(origin: string, options: { ignore?: boolean; timeoutMs?: number } = {}): Promise<Robots> {
+export async function loadRobots(
+  origin: string,
+  options: { ignore?: boolean; timeoutMs?: number; headers?: Record<string, string>; cookies?: Record<string, string>; proxy?: string } = {}
+): Promise<Robots> {
   if (options.ignore) return ALLOW_ALL("ignored");
   try {
-    const txt = await fetchHtml(`${origin}/robots.txt`, { timeoutMs: options.timeoutMs ?? 5000 });
+    // Same route as the crawl itself (a site reachable only through the caller's proxy).
+    const txt = await fetchHtml(`${origin}/robots.txt`, {
+      timeoutMs: options.timeoutMs ?? 5000,
+      headers: options.headers,
+      cookies: options.cookies,
+      proxy: options.proxy,
+      scanChallenge: false,
+    });
     return robotsFromText(origin, txt);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     // "HTTP 404: ..." from fetchHtml, or "Anti-Bot protection triggered: HTTP Status 503 ..." from detectAntiBot.
     const status = Number(/HTTP (?:Status )?(\d{3})/.exec(message)?.[1] || 0);
     if (status >= 400 && status < 500 && status !== 429) return ALLOW_ALL("none");
-    // A challenge page served with 200 hides the file: no rules we could read.
-    if (!status && classifyFailure(err) === "anti_bot") return ALLOW_ALL("none");
     return { state: "unreachable", sitemaps: [], isAllowed: () => false };
   }
 }

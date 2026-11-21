@@ -2,8 +2,9 @@ import { describe, expect, test, beforeAll, afterAll, afterEach } from "bun:test
 import { extractContacts } from "./contacts.js";
 import { deepEnrichLead } from "./enrichment-bridge.js";
 import { crawlWebsite, mapWebsite } from "./crawler.js";
-import { extractFast } from "./extractor.js";
-import { isPathAllowed, parseRobots, robotsFromText, robotsPatternMatches } from "./robots.js";
+import { extractFast, withEscalationHint } from "./extractor.js";
+import { classifyFailure } from "./errors.js";
+import { isPathAllowed, loadRobots, parseRobots, robotsFromText, robotsPatternMatches } from "./robots.js";
 
 const HOME = `<!DOCTYPE html><html><body>
   <h1>Clínica Trust</h1>
@@ -12,6 +13,7 @@ const HOME = `<!DOCTYPE html><html><body>
   <a href="/contato">Contato</a>
   <a href="/private/area">Area</a>
   <a href="/public">Public</a>
+  <a href="/go-private">Shortcut</a>
 </body></html>`;
 const CONTATO = `<!DOCTYPE html><html><body>
   <p>Agenda: agenda@trust.example</p>
@@ -42,6 +44,10 @@ beforeAll(() => {
       if (path === "/") return html(HOME);
       if (path === "/contato") return html(CONTATO);
       if (path === "/private/area" || path === "/public") return html(PAGE(path));
+      if (path === "/go-private") return new Response(null, { status: 302, headers: { Location: "/private/area" } });
+      if (path === "/moved") return new Response(null, { status: 301, headers: { Location: "/landing" } });
+      if (path === "/landing") return html(`<html><body><a href="mailto:landing@trust.example">x</a></body></html>`);
+      if (path === "/sitemap.xml") return new Response(`<urlset><url><loc>${base}/public</loc></url></urlset>`, { headers: { "Content-Type": "application/xml" } });
       if (path === "/blocked") return html("<html><title>Just a moment...</title><body>Checking your browser</body></html>", 403);
       return new Response("Not Found", { status: 404 });
     },
@@ -107,7 +113,51 @@ describe("per-field provenance", () => {
   });
 });
 
+describe("provenance after codex review", () => {
+  test("a redirected page is named by its final URL", async () => {
+    const r = await extractContacts({ url: `${base}/moved`, deepScan: false });
+    expect(r.evidence.find((ev) => ev.value === "landing@trust.example")!.source_url).toBe(`${base}/landing`);
+  });
+
+  test("caller-supplied html keeps the caller's fetch time", async () => {
+    const at = "2026-11-20T10:00:00.000Z";
+    const r = await extractContacts({ url: `${base}/`, html: HOME, observedAt: at, deepScan: false });
+    expect(r.evidence.length).toBeGreaterThan(0);
+    for (const ev of r.evidence) expect(ev.observed_at).toBe(at);
+  });
+
+  test("a refused escalation still classifies as anti_bot", () => {
+    expect(classifyFailure(withEscalationHint(new Error("HTTP 401: Just a moment")))).toBe("anti_bot");
+  });
+});
+
 describe("robots.txt parsing", () => {
+  test("comments are cut without a regex (U+2028 and many #)", () => {
+    const line = "Disallow: /x #" + "#\u2028".repeat(20000);
+    const started = performance.now();
+    const { rules } = parseRobots(`User-agent: *\n${line}\n`);
+    expect(performance.now() - started).toBeLessThan(200);
+    expect(isPathAllowed(rules, "/x/1")).toBe(false);
+  });
+
+  test("percent-escapes of unreserved characters are compared decoded", () => {
+    const r = robotsFromText("https://s.example", "User-agent: *\nDisallow: /private\nDisallow: /caf%C3%A9\nDisallow: /a%2fb\n");
+    expect(r.isAllowed("https://s.example/%70rivate")).toBe(false);
+    expect(r.isAllowed("https://s.example/café")).toBe(false);
+    expect(r.isAllowed("https://s.example/a%2Fb")).toBe(false);
+    expect(r.isAllowed("https://s.example/a/b")).toBe(true);
+  });
+
+  test("an unknown record between user-agent lines does not split the group", () => {
+    const { rules } = parseRobots("User-agent: lookacrawler\nCrawl-delay: 5\nUser-agent: OtherBot\nDisallow: /x\n");
+    expect(isPathAllowed(rules, "/x")).toBe(false);
+  });
+
+  test("a pattern without a leading / is ignored; a leading * is kept", () => {
+    expect(isPathAllowed(parseRobots("User-agent: *\nDisallow: private\n").rules, "/private")).toBe(true);
+    expect(isPathAllowed(parseRobots("User-agent: *\nDisallow: *\n").rules, "/anything")).toBe(false);
+  });
+
   test("a group for our token replaces the * group", () => {
     const txt = "User-agent: *\nDisallow: /\n\nUser-agent: LookaCrawler\nDisallow: /admin\n";
     const { rules } = parseRobots(txt);
@@ -172,7 +222,8 @@ describe("robots.txt in crawl and map", () => {
     const r = await crawlWebsite({ startUrl: `${base}/`, maxDepth: 1, maxPages: 10, ignoreRobots: true });
     expect(r.robots).toBe("ignored");
     expect(r.skippedByRobots).toEqual([]);
-    expect(hits["/private/area"]).toBe(1);
+    // Fetched directly and through the /go-private redirect.
+    expect(hits["/private/area"]).toBeGreaterThanOrEqual(1);
   });
 
   test("a disallowed start URL is reported, not fetched", async () => {
@@ -193,6 +244,34 @@ describe("robots.txt in crawl and map", () => {
     const shut = await crawlWebsite({ startUrl: `${base}/`, maxDepth: 0 });
     expect(shut.robots).toBe("unreachable");
     expect(shut.totalPagesCrawled).toBe(0);
+  });
+
+  test("robots.txt: a 502 with a bot-ish title is unreachable; a challenge word in a comment is not a wall", async () => {
+    robotsTxt = "<html><title>Access Denied</title></html>";
+    robotsStatus = 502;
+    expect((await loadRobots(base)).state).toBe("unreachable");
+    robotsTxt = "# protected by cf-turnstile\nUser-agent: *\nDisallow: /private\n";
+    robotsStatus = 200;
+    const r = await loadRobots(base);
+    expect(r.state).toBe("applied");
+    expect(r.isAllowed(`${base}/private/area`)).toBe(false);
+  });
+
+  test("crawl does not follow a redirect into a disallowed path", async () => {
+    robotsTxt = "User-agent: *\nDisallow: /private\n";
+    const r = await crawlWebsite({ startUrl: `${base}/go-private`, maxDepth: 0 });
+    expect(r.pages[0].error).toContain("disallowed by robots.txt");
+    expect(hits["/go-private"]).toBe(1);
+    expect(hits["/private/area"]).toBeUndefined();
+  });
+
+  test("map fetches no disallowed sitemap and reports a vetoed start URL", async () => {
+    robotsTxt = "User-agent: *\nDisallow: /\n";
+    const r = await mapWebsite({ url: `${base}/` });
+    expect(r.urls).toEqual([]);
+    expect(r.skippedByRobots).toContain(`${base}/`);
+    expect(hits["/sitemap.xml"]).toBeUndefined();
+    expect(hits["/"]).toBeUndefined();
   });
 
   test("map leaves disallowed URLs out and reads robots.txt once", async () => {

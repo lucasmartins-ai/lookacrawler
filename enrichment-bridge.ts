@@ -253,10 +253,12 @@ export async function deepEnrichLead(
     // On a deep-mode cache hit skip the browser: extractContacts fetches the
     // home page itself with a plain request.
     let rawHtml: string | undefined;
+    let homeFetchedAt: string | undefined;
     if (!homeMarkdown || mode === "fast") {
       try {
         rawHtml = await fetchHomeHtml(lead.web_site, mode);
-        if (!homeMarkdown) markdownObservedAt = new Date().toISOString();
+        homeFetchedAt = new Date().toISOString();
+        if (!homeMarkdown) markdownObservedAt = homeFetchedAt;
       } catch (fetchErr) {
         // With cached markdown we can still summarize; without it there is nothing to enrich.
         if (!homeMarkdown) throw fetchErr;
@@ -286,6 +288,7 @@ export async function deepEnrichLead(
       contacts = await extractContacts({
         url: lead.web_site,
         html: rawHtml,
+        observedAt: homeFetchedAt,
         deepScan: crawlContactPages,
         defaultRegion: region,
       });
