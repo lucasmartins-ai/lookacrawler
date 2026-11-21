@@ -102,6 +102,29 @@ describe("Resilience Module (resilience.ts)", () => {
       expect(calls).toBe(1);
     });
 
+    test("a 429 or 503 inside a URL is not a retryable status", async () => {
+      for (const message of [
+        "Redirect to http://localhost:44290/private/area is disallowed by robots.txt",
+        "HTTP 404: Not Found on https://shop.example/p/503",
+      ]) {
+        let calls = 0;
+        await expect(
+          retryWithBackoff(async () => {
+            calls++;
+            throw new Error(message);
+          }, { maxRetries: 3, initialDelayMs: 1 })
+        ).rejects.toThrow(message);
+        expect(calls).toBe(1);
+      }
+      for (const message of ["HTTP 429 Too Many Requests", "503 Service Unavailable", "Anti-Bot protection triggered: HTTP Status 503 (Service Unavailable)"]) {
+        let calls = 0;
+        await retryWithBackoff(async () => {
+          if (++calls === 1) throw new Error(message);
+        }, { maxRetries: 3, initialDelayMs: 1 });
+        expect(calls).toBe(2);
+      }
+    });
+
     test("should succeed on first attempt if no error", async () => {
       let calls = 0;
       const res = await retryWithBackoff(async () => {
