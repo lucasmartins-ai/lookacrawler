@@ -1,4 +1,6 @@
 import type { Browser } from "playwright";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
 import { buildStealthInit } from "./stealth.js";
 import { getEgressGuard } from "./egress-guard.js";
 import { isLocalAccessAllowed, validateProxyUrl } from "./security.js";
@@ -172,13 +174,32 @@ export async function getBrowser(proxy?: string): Promise<Browser> {
  */
 export async function loadChromium(): Promise<typeof import("playwright").chromium> {
   try {
-    return (await import("playwright")).chromium;
+    return (await importPlaywright()).chromium;
   } catch (err) {
     throw new Error(
-      "This needs a browser (deep mode), but Playwright was not found. Run `npm i playwright && npx playwright install chromium` " +
-        `in the working directory, set NODE_PATH to a node_modules that has it, or use mode "fast". (${err instanceof Error ? err.message : String(err)})`.slice(0, 500)
+      "This needs a browser (deep mode), but Playwright was not found. Install it (`npm i playwright && npx playwright install chromium`) " +
+        `and set LOOKACRAWLER_PLAYWRIGHT_DIR to the folder that holds its node_modules, or use mode "fast". (${err instanceof Error ? err.message : String(err)})`.slice(0, 500)
     );
   }
+}
+
+/**
+ * From source, Playwright resolves from this package's own node_modules. The
+ * compiled binary would resolve a bare specifier from the working directory,
+ * and an MCP client starts us inside whatever project is open: a planted
+ * node_modules/playwright there would run as us. So the binary only loads it
+ * from LOOKACRAWLER_PLAYWRIGHT_DIR or from beside the binary itself.
+ */
+async function importPlaywright(): Promise<typeof import("playwright")> {
+  const compiled = import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN");
+  if (!compiled) return import("playwright");
+  const dirs = [process.env.LOOKACRAWLER_PLAYWRIGHT_DIR, dirname(process.execPath)].filter((d): d is string => !!d);
+  for (const dir of dirs) {
+    try {
+      return await import(createRequire(join(resolve(dir), "noop.js")).resolve("playwright"));
+    } catch {}
+  }
+  throw new Error(`playwright not found under ${dirs.join(" or ")}`);
 }
 
 /** Try real Chrome first; degrade to bundled Chromium if the channel is unavailable. */

@@ -119,6 +119,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`loadChromium()` in `browser-manager.ts`, also used by `tiktok.ts`). With a
   static import every command, `--version` included, crashed wherever
   Playwright was not installed; deep mode now fails with install instructions.
+  The compiled binary loads Playwright only from `LOOKACRAWLER_PLAYWRIGHT_DIR`
+  or beside the binary, never from the working directory, where an opened
+  project could plant a `node_modules/playwright`.
 - `social fb-posts` / `fb-search` read the 10/2026 Facebook layout. Post body from
   `[data-ad-rendering-role=story_message]` (fallback `[data-ad-preview=message]`),
   permalink from the bare timestamp link that Facebook fills on hover (search:

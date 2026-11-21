@@ -121,8 +121,9 @@ Tagged releases attach `lookacrawler-darwin-arm64` and `lookacrawler-linux-x64`
 `bun run build:linux-x64` (output in `dist/`). Fast mode, `map`, `crawl`,
 `contacts`, `serve` and `init` work from the binary alone. Playwright is not
 bundled: deep mode needs `npm i playwright && npx playwright install chromium`
-in the working directory (or `NODE_PATH` pointing at a `node_modules` that has
-it), and says so when it is missing.
+in a folder you choose, with `LOOKACRAWLER_PLAYWRIGHT_DIR` set to that folder
+(or the `node_modules` beside the binary). The binary never loads Playwright
+from the working directory, so a project you open cannot plant its own copy.
 
 ### 2. CLI Commands
 
