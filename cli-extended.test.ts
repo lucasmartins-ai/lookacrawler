@@ -1,20 +1,9 @@
 import { describe, it, expect } from "bun:test";
+import { runCli as spawnCli } from "./test-spawn";
 
 async function runCli(args: string[], env?: Record<string, string>): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(["bun", "cli.ts", ...args], {
-    cwd: import.meta.dir,
-    env: { ...process.env, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-
-  const exitCode = await proc.exited;
-  return { exitCode, stdout, stderr };
+  const r = await spawnCli(args, { env: { ...process.env, ...env } });
+  return { exitCode: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 describe("CLI Extended Integration Suite (cli.ts)", () => {

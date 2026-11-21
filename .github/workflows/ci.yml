@@ -27,3 +27,32 @@ jobs:
         "$GITHUB_WORKSPACE/dist/lookacrawler-linux-x64" --version
         HOME="$RUNNER_TEMP/bin-smoke" "$GITHUB_WORKSPACE/dist/lookacrawler-linux-x64" init --dry-run
         "$GITHUB_WORKSPACE/dist/lookacrawler-linux-x64" extract https://example.com | grep -q "documentation examples"
+
+  # TEMPORARY (remove before merge): does the CLI itself hang, outside `bun test`?
+  stress-cli:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.3.14
+    - run: bun install --frozen-lockfile
+    - name: Spawn the CLI many times from bash
+      run: |
+        set +e
+        hung=0
+        probe() {
+          bun cli.ts "$@" >/dev/null 2>&1 & pid=$!
+          for t in $(seq 100); do kill -0 $pid 2>/dev/null || break; [ "$(awk '{print $3}' /proc/$pid/stat 2>/dev/null)" = Z ] && break; sleep 0.1; done
+          state=$(awk '{print $3}' /proc/$pid/stat 2>/dev/null)
+          if [ -n "$state" ] && [ "$state" != Z ]; then
+            hung=$((hung+1)); echo "HANG run=$1 state=$state wchan=$(cat /proc/$pid/wchan 2>/dev/null)"
+            ls -l /proc/$pid/fd 2>/dev/null; cat /proc/$pid/status 2>/dev/null | grep -E 'State|Threads'
+            kill -9 $pid
+          fi
+          wait $pid 2>/dev/null
+        }
+        for i in $(seq 1 1000); do probe --version; done
+        for i in $(seq 1 300); do probe audit http://127.0.0.1:9/; done
+        for i in $(seq 1 300); do probe antislop "No cenário atual"; done
+        echo "hangs: $hung of 1600"
