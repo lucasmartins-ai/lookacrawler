@@ -231,6 +231,22 @@ Without it, `maps` fails fast with a clear message; `extract`, `crawl`,
 `contacts`, `places` and `enrich` are unaffected. Pass `--email` to let the
 scraper extract public emails during discovery.
 
+### TikTok (public data, no login)
+
+```bash
+bun run cli.ts tiktok profile @khaby.lame --limit 10
+bun run cli.ts tiktok trends --region BR --period 7 --kind hashtag
+```
+
+Same as the MCP tools `tiktok_profile` and `tiktok_trends`. Output envelope:
+`{ "ok": true, "source": "yt-dlp"|"browser"|"creative-center", "items": [...] }` or
+`{ "ok": false, "status": "blocked"|"error", "reason": "..." }` (exit code 1).
+`blocked` means TikTok answered 403/429 or a CAPTCHA: final, do not retry.
+Profiles need `yt-dlp` with `curl_cffi` on PATH (`LOOKACRAWLER_YTDLP` overrides
+the binary). Nothing here logs in, signs requests or solves CAPTCHAs; from a
+headless browser TikTok often answers with a CAPTCHA (profiles) or 403 (Creative
+Center). Measurements and limits: [docs/specs/tiktok.md](docs/specs/tiktok.md).
+
 ### 4. Docker Deployment
 
 ```bash

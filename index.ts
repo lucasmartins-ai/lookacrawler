@@ -673,6 +673,47 @@ Login-walled pages return only a summary line. Other hosts return platform "unkn
   );
 
   server.registerTool(
+    "tiktok_profile",
+    {
+      description: `Recent videos of a public TikTok profile (no login): id, url, author, description, createTime (ISO), views, likes, comments, shares, durationSec.
+Tries yt-dlp first, then a plain browser reading the page's own data. Returns {ok:true, source, items} or {ok:false, status:"blocked"|"error", reason}; "blocked" (403/CAPTCHA) is final, do not retry.`,
+      inputSchema: {
+        handle: z.string().min(1).max(100).describe("Profile handle ('@name') or profile URL."),
+        limit: z.number().int().min(1).max(100).default(20).optional().describe("Maximum videos (default: 20)."),
+      },
+    },
+    async ({ handle, limit }) => {
+      try {
+        const { tiktokProfile } = await import("./tiktok.js");
+        return jsonResult(await tiktokProfile(handle, { limit }));
+      } catch (error: any) {
+        return failure("TikTok profile", error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "tiktok_trends",
+    {
+      description: `TikTok Creative Center trend list for a region (public page, no login): rank, kind, id, name, url, views, posts, author, createTime.
+Without login Creative Center shows only the top few rows; 'video' is served for US only, 'song'/'creator' are not published. Same {ok, source, items} / {ok:false, status, reason} envelope as tiktok_profile.`,
+      inputSchema: {
+        region: z.string().regex(/^[A-Za-z]{2}$/).default("BR").optional().describe("Two-letter region code (default: BR)."),
+        period: z.union([z.literal(7), z.literal(30)]).default(7).optional().describe("Days: 7 or 30 (default: 7)."),
+        kind: z.enum(["hashtag", "song", "creator", "video"]).default("hashtag").optional().describe("List kind (default: hashtag)."),
+      },
+    },
+    async ({ region, period, kind }) => {
+      try {
+        const { tiktokTrends } = await import("./tiktok.js");
+        return jsonResult(await tiktokTrends({ region, period, kind }));
+      } catch (error: any) {
+        return failure("TikTok trends", error);
+      }
+    }
+  );
+
+  server.registerTool(
     "audit_company_website",
     {
       description: `Audit a company website: SEO checklist score with the issues found, conversion channels (WhatsApp, phone, email, online booking, contact form), listed services, value proposition and a 0-100 digital-maturity score. Deterministic, no paid API.`,

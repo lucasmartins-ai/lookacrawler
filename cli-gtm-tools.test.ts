@@ -88,11 +88,18 @@ describe("MCP: new tools", () => {
 
   test("registers the tools and lint_anti_slop works", async () => {
     const names = (await client.listTools()).tools.map((t) => t.name);
-    for (const n of ["lint_anti_slop", "lookup_social_profile", "search_social_intent", "audit_company_website", "analyze_competitors", "generate_growth_plan", "gtm_pipeline_run"]) {
+    for (const n of ["lint_anti_slop", "lookup_social_profile", "search_social_intent", "audit_company_website", "analyze_competitors", "generate_growth_plan", "gtm_pipeline_run", "tiktok_profile", "tiktok_trends"]) {
       expect(names).toContain(n);
     }
     const res: any = await client.callTool({ name: "lint_anti_slop", arguments: { text: "Uma solução revolucionária.", language: "pt" } });
     expect(JSON.parse(res.content[0].text).violationsCount).toBe(1);
+  });
+
+  test("tiktok tools answer bad input with the error envelope, no network", async () => {
+    const res: any = await client.callTool({ name: "tiktok_trends", arguments: { kind: "song" } });
+    expect(JSON.parse(res.content[0].text)).toMatchObject({ ok: false, status: "error" });
+    const prof: any = await client.callTool({ name: "tiktok_profile", arguments: { handle: "../etc" } });
+    expect(JSON.parse(prof.content[0].text)).toMatchObject({ ok: false, status: "error" });
   });
 
   test("tools reject unsafe input", async () => {

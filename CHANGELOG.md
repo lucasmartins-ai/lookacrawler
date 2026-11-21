@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- `tiktok profile @handle [--limit N]` and `tiktok trends [--region BR] [--period 7|30]
+  [--kind hashtag|video]`, also as MCP tools `tiktok_profile` / `tiktok_trends`.
+  Profiles come from `yt-dlp --flat-playlist`, falling back to a plain headless
+  Chromium that reads the page's own `item_list` / rehydration JSON. Trends come
+  from the Creative Center page's own list response. One envelope for both:
+  `{ok, source, items}` or `{ok:false, status:"blocked"|"error", reason}`;
+  403/429/CAPTCHA is `blocked` and never retried. No stealth patches, no login.
+  Spec and measurements: `docs/specs/tiktok.md`.
+- `social fb-posts` reads each post's top-level comments from its permalink
+  (`{author, text, date, url}`, `date` is Facebook's relative age, max 30 per post).
+  It switches the order to "Todos os comentários" and scrolls the post dialog (or presses
+  "Ver mais comentários") within a 5 s budget. Read-only: only sort/expand controls are
+  clicked. `--no-comments` skips it (~6 s per post otherwise). Checked live 18/10/2026:
+  matches the page on two group posts with comments; 30 of 30 on a page post with
+  hundreds; 20 recent posts of group 542220895801669 really show "Ainda não há nenhum
+  comentário", so `comments: []` there is correct.
 - Optional TypeSafe System One (Jev) judgments, on only when `TYPESAFE_API_KEY`
   (or the macOS Keychain item `typesafe`) is set; `LOOKACRAWLER_JEV=off` disables
   them. `gtm` asks one batched question per run and skips Maps results outside
@@ -35,6 +52,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `social fb-posts` / `fb-search` read the 10/2026 Facebook layout. Post body from
+  `[data-ad-rendering-role=story_message]` (fallback `[data-ad-preview=message]`),
+  permalink from the bare timestamp link that Facebook fills on hover (search:
+  `?multi_permalinks=<id>`), date from the timestamp tooltip, `groupPublic` from the
+  group header, and the source `group` on search rows. The feed is virtualised, so
+  posts are collected across viewport-sized scrolls and keyed by URL; rows without a
+  permalink are dropped. Checked live on one public pt-BR group (6 and 8 posts) and one
+  search query (6 posts) on 17/10/2026.
+- Bridge calls send `Connection: close`. The "socket connection was closed
+  unexpectedly" failure was Bun reusing a keep-alive socket the bridge had already
+  closed (the call failed in ~3 ms), not a slow page script.
 - `gtm` niche gate no longer treats "supplier" as a miss: Google labels solar
   installers "Fornecedor de equipamentos a energia solar", and 9 real ones
   scored 0.03-0.17. Cut moved from 0.2 to 0.3 after one scoring run over 179 real Maps leads.

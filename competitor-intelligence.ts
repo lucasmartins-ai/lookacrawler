@@ -91,7 +91,23 @@ export function extractDomain(website?: string, fallbackTitle = "lead"): string 
   return `${slug || "lead"}.surrogate`;
 }
 
-const BOOKING = /agendamento|agendar|agende|marcar (consulta|hor[aá]rio)|reserv(ar|e)|book(ing)?\b|schedule|appointment|calendly|doctoralia/i;
+// Online booking = a link to a booking page (path) or to a booking vendor, or an embedded
+// vendor widget. Page text and "Book now" -> /contact or tel: are NOT online booking: the
+// old text regex flagged any FAQ that said "booking" (verified 17/10 on two Sheffield
+// dental sites with phone-only booking).
+// ponytail: fixed vendor list; add vendors as real misses show up.
+const BOOKING_VENDOR = /calendly\.com|doctoralia|feegow|ninsaude|clinicorp|dentally|cliniko|vetstoria|petsapp|setmore|simplybook|booksy|fresha|treatwell|acuityscheduling|zocdoc|doctolib|pabau|phorest|zenoti|that-time\.co\.uk|jane\.app|writeupp|gettimely|vagaro|mindbodyonline|squareup\.com\/appointments|facesconsent|portal\.dental|carestack|\/\/[^\/?#]*(?:booking|appointment|agend|reserv)[^\/?#]*\./i;
+const BOOKING_PATH = /\/(agend|marcar|reserv|book|appointment|schedul)[^/]*\/?$/i;
+
+function bookingTarget(href: string, baseUrl: string): boolean {
+  if (/^(tel:|mailto:|#|javascript:)/i.test(href)) return false;
+  if (BOOKING_VENDOR.test(href)) return true;
+  try {
+    return BOOKING_PATH.test(new URL(href, baseUrl).pathname);
+  } catch {
+    return false;
+  }
+}
 const SERVICES_HEADING = /servi[cç]os|services|tratamentos|especialidades|solu[cç][oõ]es|produtos|products|what we (do|offer)|o que fazemos/i;
 const TRACKING = /googletagmanager\.com|google-analytics\.com|gtag\(|connect\.facebook\.net|fbq\(|plausible\.io|hotjar\.com|clarity\.ms/i;
 
@@ -117,12 +133,22 @@ export function auditHtml(html: string, url: string, companyName?: string): Site
 
   let bookingUrl: string | undefined;
   for (const a of Array.from(doc.querySelectorAll("a[href]"))) {
-    if (BOOKING.test(a.getAttribute("href") || "") || BOOKING.test(text(a))) {
-      bookingUrl = a.getAttribute("href") || undefined;
+    const href = a.getAttribute("href") || "";
+    if (bookingTarget(href, url)) {
+      bookingUrl = href;
       break;
     }
   }
-  const hasOnlineBooking = Boolean(bookingUrl) || BOOKING.test(markdown);
+  if (!bookingUrl) {
+    for (const el of Array.from(doc.querySelectorAll("iframe[src], script[src]"))) {
+      const src = el.getAttribute("src") || "";
+      if (BOOKING_VENDOR.test(src)) {
+        bookingUrl = src;
+        break;
+      }
+    }
+  }
+  const hasOnlineBooking = Boolean(bookingUrl);
   const hasContactForm = doc.querySelector("form") !== null;
   const whatsappLink = contacts.whatsapps[0];
 

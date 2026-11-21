@@ -37,6 +37,8 @@ Commands:
   intent "<text>"             Score buying intent of a post/comment (pt-BR + EN).
   social-lookup <url>         Public profile meta tags (Instagram, LinkedIn, X); no login.
   intent-search "<query>"     Reddit buying-intent search (public .json, no key).
+  tiktok profile @handle      Recent videos of a public TikTok profile (yt-dlp, then a clean browser).
+  tiktok trends               TikTok Creative Center trends for a region (headless browser).
   daemon <start|stop|status>  Manage the Maps scraper web-mode daemon (127.0.0.1 only).
   serve                       Start the MCP server (stdio or SSE HTTP transport).
   --help, -h                  Show this help text.
@@ -62,6 +64,7 @@ Options for 'contacts':
 
 Options for 'maps':
   --email                     Let the scraper extract public emails (slower).
+  --reviews                   Also fetch extra reviews (maps; ~+20s per query).
   --location <text>           Location passed to the Maps engine.
   --limit <n>                 Maximum leads (default: 20).
   --lang <code>               Language for categories and labels (default: pt).
@@ -75,6 +78,7 @@ Subcommands for 'social':
   doctor                      Bridge + login state of open tabs (never navigates).
   fb-search "<query>"         Search Facebook posts.
   fb-posts <group|page url>   Posts (and their comments) of a group or page.
+  --no-comments               Skip opening each post for its comments (fb-posts).
   ig-comments <post url>      Comments of an Instagram post.
   ig-comment <post url> "<text>"  Comment on a post; dry run unless --live.
   --reply-to <comment id>     Reply to that comment (ig-comment).
@@ -114,6 +118,15 @@ Options for 'antislop' / 'intent':
 Options for 'intent-search':
   --subreddit <name>          Restrict to one subreddit.
   --limit <n>                 Maximum posts (default: 5, max 25).
+
+Options for 'tiktok':
+  --limit <n>                 profile: maximum videos (default: 20, max 100).
+  --region <CC>               trends: two-letter region (default: BR).
+  --period <7|30>             trends: days (default: 7).
+  --kind <hashtag|video>      trends: list kind (default: hashtag). song/creator are not
+                              published by Creative Center without login.
+                              Output: {ok:true,source,items} or {ok:false,status:"blocked"|"error",reason};
+                              exit code 1 when ok is false.
 
 Options for 'daemon':
   --port <n>                  Daemon port (default: 8088).
@@ -319,7 +332,7 @@ async function runCli() {
     const run: Record<string, () => Promise<unknown>> = {
       doctor: () => social.socialDoctor(),
       "fb-search": () => social.fbSearch(a1, limit),
-      "fb-posts": () => social.fbPosts(a1, limit),
+      "fb-posts": () => social.fbPosts(a1, limit, { comments: !args.includes("--no-comments") }),
       "ig-comments": () => social.igComments(a1, limit),
       "ig-comment": () => social.igComment(a1, a2, { replyTo: getOption(args, "--reply-to"), live: args.includes("--live") }),
     };
@@ -399,6 +412,7 @@ async function runCli() {
         limit,
         fastMode: args.includes("--fast-mode"),
         extractEmails: args.includes("--email"),
+        extraReviews: args.includes("--reviews"),
         lang: getOption(args, "--lang"),
       });
       // A failed run (missing scraper, timeout, scraper error) also comes back
@@ -694,6 +708,24 @@ async function runCli() {
     return;
   }
 
+  if (command === "tiktok") {
+    const tt = await import("./tiktok.js");
+    const [sub, target = ""] = positionalUrls;
+    const result =
+      sub === "profile"
+        ? await tt.tiktokProfile(target, { limit: Number(getOption(args, "--limit")) || undefined })
+        : sub === "trends"
+          ? await tt.tiktokTrends({
+              region: getOption(args, "--region"),
+              period: getOption(args, "--period") ? Number(getOption(args, "--period")) : undefined,
+              kind: getOption(args, "--kind") as any,
+            })
+          : { ok: false as const, status: "error" as const, reason: "usage: lookacrawler tiktok profile @handle [--limit N] | tiktok trends [--region BR] [--period 7|30] [--kind hashtag|video]" };
+    await emitJson(args, result, "TikTok output");
+    if (!result.ok) process.exit(1);
+    return;
+  }
+
   if (command === "daemon") {
     const { getMapsDaemonStatus, startMapsDaemon, stopMapsDaemon } = await import("./maps-daemon.js");
     const sub = positionalUrls[0];
@@ -835,6 +867,8 @@ function getPositionalArgs(args: string[], command: string): string[] {
     "--locale",
     "--name",
     "--subreddit",
+    "--period",
+    "--kind",
   ]);
 
   const positional: string[] = [];

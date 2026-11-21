@@ -1,84 +1,190 @@
 import { describe, expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 import {
+  buildFbCommentsScript,
   buildFbPostsScript,
-  buildFbSearchScript,
   buildIgAddCommentScript,
   buildIgCommentsScript,
   igComment,
   igPostRef,
+  parseFbDate,
   shortcodeToPk,
 } from "./social.js";
 
 /** Run a page script inside a JSDOM window, as CDP_EVAL would in Chrome. */
-function runInPage(html: string, script: string, url = "https://www.facebook.com/groups/carrosexemplo"): any {
+function runInPage(html: string, script: string, url = "https://www.facebook.com/groups/carrosexemplo", setup?: (w: any) => void): any {
   const dom = new JSDOM(html, { url, runScripts: "outside-only" });
+  setup?.(dom.window);
   return dom.window.eval(script);
 }
 
-const post = (id: string, author: string, text: string, extra = "") => `
-  <div role="article">
-    <h3><a href="https://www.facebook.com/profile.php?id=${id}" role="link">${author}</a></h3>
-    <a href="https://www.facebook.com/groups/carrosexemplo/posts/${id}/?__cft__=x">2 h</a>
-    <div aria-label="Ações para esta publicação"></div>
-    <div dir="auto">${text}</div>
-    <div dir="auto">12 comentários</div>
-    <div aria-label="Curtir"></div><div aria-label="Comentar"></div>
+/**
+ * Mimic Facebook's 10/2026 behaviour: a bare "?__cft__" timestamp link gets its
+ * real href on hover, and hovering it adds a [role=tooltip] with the full date.
+ */
+function fakeHover(w: any) {
+  w.document.addEventListener("mouseover", (e: any) => {
+    const a = e.target.closest && e.target.closest("a[data-real]");
+    if (!a) return;
+    a.setAttribute("href", a.getAttribute("data-real"));
+    const tip = w.document.createElement("div");
+    tip.setAttribute("role", "tooltip");
+    tip.textContent = a.getAttribute("data-date");
+    a.tip = tip;
+    w.document.body.appendChild(tip);
+  });
+  w.document.addEventListener("mouseout", (e: any) => {
+    const a = e.target.closest && e.target.closest("a[data-real]");
+    if (a?.tip) { a.tip.remove(); a.tip = null; }
+  });
+}
+
+// Fictional people and posts only.
+const groupItem = (id: string, user: string, author: string, text: string, date: string, extra = "") => `
+  <div class="item">
+    <div data-ad-rendering-role="profile_name"><h2><a href="/groups/carrosexemplo/user/${user}/?__cft__[0]=x">${author}</a></h2></div>
+    <a href="?__cft__[0]=AZx" data-real="https://www.facebook.com/groups/carrosexemplo/posts/${id}/?__cft__[0]=AZx&amp;__tn__=R" data-date="${date}"><span>o͏d͏o͏e͏r</span></a>
+    <div data-ad-rendering-role="story_message"><div data-ad-preview="message"><div dir="auto">${text}</div></div></div>
+    <div data-ad-rendering-role="like_button"></div>
     ${extra}
   </div>`;
 
-const GROUP_PT = `<html><body><div role="main"><div role="feed">
-  ${post("111", "Carlos Lima", "Procuro HB20 ou Onix até 60 mil, à vista",
-    `<div role="article"><a href="https://www.facebook.com/profile.php?id=999" role="link">Ana Souza</a><div dir="auto">tbm to procurando, chama no zap</div></div>`)}
-  ${post("222", "Garagem Exemplo", "Vendo Gol 2015 completo, aceito troca")}
-  <div role="article"><a href="https://www.facebook.com/ads" role="link">Loja X</a><div dir="auto">Patrocinado</div><div dir="auto">Compre já seu carro</div></div>
-  <div dir="auto">58210347766</div>
+const GROUP_PT = `<html><body><div role="main"><span>Grupo Público · 12 mil membros</span><div role="feed">
+  <div></div>
+  ${groupItem("111", "9001", "Carlos Exemplo", "Procuro HB20 ou Onix até 60 mil, à vista… Ver mais", "Sexta, 16 de outubro de 2026 às 09:05")}
+  ${groupItem("222", "9003", "Garagem Modelo", "Vendo Gol 2015 completo, aceito troca", "Quinta, 15 de outubro de 2026 às 18:40")}
+  <div class="item"><div data-ad-rendering-role="profile_name">Sem corpo</div><div role="article"></div></div>
 </div></div></body></html>`;
 
-describe("Facebook posts extractor (pt-BR)", () => {
-  const res = runInPage(GROUP_PT, buildFbPostsScript(10));
-
-  test("finds real posts with author, full text and canonical post URL", () => {
+describe("Facebook feed extractor (10/2026 layout, pt-BR)", () => {
+  test("reads author, body, hover-filled permalink and tooltip date", async () => {
+    const res = await runInPage(GROUP_PT, buildFbPostsScript(10), undefined, fakeHover);
     expect(res.status).toBe("ok");
+    expect(res.groupPublic).toBe(true);
     expect(res.rows).toHaveLength(2);
     expect(res.rows[0]).toMatchObject({
-      author: "Carlos Lima",
+      author: "Carlos Exemplo",
+      authorUrl: "https://www.facebook.com/groups/carrosexemplo/user/9001/",
+      text: "Procuro HB20 ou Onix até 60 mil, à vista",
       url: "https://www.facebook.com/groups/carrosexemplo/posts/111/",
+      date: "Sexta, 16 de outubro de 2026 às 09:05",
+      comments: [],
     });
-    expect(res.rows[0].text).toContain("Procuro HB20 ou Onix até 60 mil");
+    // Each post gets its own tooltip, not a stale one from the previous hover.
+    expect(res.rows[1].date).toBe("Quinta, 15 de outubro de 2026 às 18:40");
+    expect(res.rows[1].url).toBe("https://www.facebook.com/groups/carrosexemplo/posts/222/");
   });
 
-  test("keeps comment text out of the post body and returns it separately", () => {
-    expect(res.rows[0].text).not.toContain("chama no zap");
-    expect(res.rows[0].comments).toEqual([
-      { author: "Ana Souza", authorUrl: "https://www.facebook.com/profile.php", text: "tbm to procurando, chama no zap" },
-    ]);
+  test("skips dates for posts already collected", async () => {
+    const res = await runInPage(GROUP_PT, buildFbPostsScript(10, ["https://www.facebook.com/groups/carrosexemplo/posts/111/"]), undefined, fakeHover);
+    expect(res.rows[0].date).toBe("");
+    expect(res.rows[1].date).not.toBe("");
   });
 
-  test("drops sponsored posts, metrics and decoy digit nodes", () => {
-    expect(res.rows.some((r: any) => /Compre já/.test(r.text))).toBe(false);
-    expect(res.rows[0].text).not.toContain("comentários");
-    expect(JSON.stringify(res.rows)).not.toContain("58210347766");
+  test("an item whose permalink never resolves comes back without url", async () => {
+    const res = await runInPage(GROUP_PT, buildFbPostsScript(10)); // no hover handler
+    expect(res.rows.map((r: any) => r.url)).toEqual(["", ""]);
+    expect(res.diagnostics.noUrl).toBe(2);
   });
 
-  test("reports the login wall instead of an empty result", () => {
-    const auth = runInPage("<html><body>Entrar no Facebook</body></html>", buildFbPostsScript(5), "https://www.facebook.com/login/");
+  test("private group header is reported as not public", async () => {
+    const html = GROUP_PT.replace("Grupo Público", "Grupo Privado");
+    expect((await runInPage(html, buildFbPostsScript(10), undefined, fakeHover)).groupPublic).toBe(false);
+  });
+
+  test("search results: person author, source group and multi_permalinks post id", async () => {
+    const html = `<html><body><div role="main"><div role="feed">
+      <div>
+        <a href="/groups/4242/?__cft__[0]=x" aria-label="Carros Exemplo GO"></a>
+        <div data-ad-rendering-role="profile_name"><a href="/groups/4242/?__cft__[0]=x">Carros Exemplo GO</a> · Participar</div>
+        <a href="/groups/4242/user/7007/?__cft__[0]=x">Pedro Inventado</a>
+        <a href="https://www.facebook.com/groups/4242/?multi_permalinks=5555&amp;hoisted_section_header_type=recently_seen&amp;__cft__[0]=x">o͏d͏o</a>
+        <div data-ad-rendering-role="story_message">Quero comprar um carro em Goiânia até 40 mil</div>
+      </div>
+    </div></div></body></html>`;
+    const res = await runInPage(html, buildFbPostsScript(10), "https://www.facebook.com/search/posts?q=carro");
+    expect(res.groupPublic).toBe(null);
+    expect(res.rows[0]).toMatchObject({
+      author: "Pedro Inventado",
+      url: "https://www.facebook.com/groups/4242/posts/5555/",
+      group: { name: "Carros Exemplo GO", url: "https://www.facebook.com/groups/4242/" },
+      text: "Quero comprar um carro em Goiânia até 40 mil",
+    });
+  });
+
+  test("reports the login wall instead of an empty result", async () => {
+    const auth = await runInPage("<html><body>Entrar no Facebook</body></html>", buildFbPostsScript(5), "https://www.facebook.com/login/");
     expect(auth.status).toBe("auth");
+  });
+
+  test("tooltip dates become ISO local time", () => {
+    expect(parseFbDate("Sábado, 17 de outubro de 2026 às 22:18")).toBe("2026-10-17T22:18");
+    expect(parseFbDate("3 de março de 2025")).toBe("2025-03-03");
+    expect(parseFbDate("Friday, October 16, 2026 at 9:05 PM")).toBe("2026-10-16T21:05");
+    expect(parseFbDate("Friday, October 16, 2026 at 12:30 AM")).toBe("2026-10-16T00:30");
+    expect(parseFbDate("ontem")).toBe("ontem");
   });
 });
 
-describe("Facebook search extractor", () => {
-  test("keeps entity links, drops search decoys and tracking params", () => {
-    const html = `<html><body><div role="feed">
-      <div><a href="https://www.facebook.com/groups/carrosexemplo2/">Carros Compra e Venda</a> Grupo público · 45 mil membros</div>
-      <div><a href="https://www.facebook.com/search/top?q=x">s e a r c h</a></div>
-      <div><a href="https://www.facebook.com/permalink.php?story_fbid=55&id=7&__cft__=abc">Alguém vende Strada usada?</a> pago à vista</div>
-    </div></body></html>`;
-    const res = runInPage(html, buildFbSearchScript(10));
-    expect(res.rows.map((r: any) => r.url)).toEqual([
-      "https://www.facebook.com/groups/carrosexemplo2/",
-      "https://www.facebook.com/permalink.php?story_fbid=55&id=7",
+const comment = (id: string, user: string, name: string, age: string, ageShort: string, text: string, kind = "Comentário") => `
+  <div role="article" aria-label="${kind} de ${name} ${age}">
+    <a href="/groups/carrosexemplo/user/${user}/?__cft__[0]=x"><span dir="auto">${name}</span></a>
+    <div dir="auto"><div dir="auto">${text}</div></div>
+    <a href="https://www.facebook.com/groups/carrosexemplo/posts/111/?comment_id=${id}&amp;__cft__[0]=x">${ageShort}</a>
+    <div role="button">Responder</div>
+  </div>`;
+
+const POST_DIALOG = `<html><body><div role="main">feed atrás</div><div role="dialog">
+  <div data-ad-rendering-role="story_message">Vendo Onix 2016, aceito troca</div>
+  <div role="button" id="sort">Mais relevantes</div>
+  <div id="list">
+    ${comment("1", "9101", "Bruna Fictícia", "há 2 dias", "2 d", "valor?")}
+    ${comment("2", "9102", "Diego Inventado", "há 1 dia", "1 d", "aceita troca? Ver mais")}
+    ${comment("3", "9103", "Carlos Exemplo", "há 1 dia", "1 d", "aceito sim, chama inbox", "Resposta")}
+  </div>
+  <div role="button" id="more">Ver mais comentários</div>
+</div></body></html>`;
+
+/** "Todos os comentários" reveals a hidden comment; "Ver mais comentários" loads one more then disappears. */
+function fakeCommentUi(w: any) {
+  const d = w.document;
+  d.getElementById("sort").addEventListener("click", () => {
+    const item = d.createElement("div");
+    item.setAttribute("role", "menuitem");
+    item.textContent = "Todos os comentáriosMostre todos os comentários, incluindo possível spam.";
+    item.addEventListener("click", () => d.getElementById("list").insertAdjacentHTML("beforeend", comment("4", "9104", "Elisa Modelo", "há 3 horas", "3 h", "ainda disponível?")));
+    d.body.appendChild(item);
+  });
+  d.getElementById("more").addEventListener("click", (e: any) => {
+    d.getElementById("list").insertAdjacentHTML("beforeend", comment("5", "9105", "Fábio Teste", "há 1 hora", "1 h", "faz por 40?"));
+    e.target.remove();
+  });
+}
+
+describe("Facebook comments extractor (post permalink dialog)", () => {
+  const url = "https://www.facebook.com/groups/carrosexemplo/posts/111/";
+
+  test("switches to all comments, loads more, keeps top-level comments only", async () => {
+    const res = await runInPage(POST_DIALOG, buildFbCommentsScript(30, 3000), url, fakeCommentUi);
+    expect(res.status).toBe("ok");
+    expect(res.comments.map((c: any) => [c.author, c.text, c.date])).toEqual([
+      ["Bruna Fictícia", "valor?", "há 2 dias"],
+      ["Diego Inventado", "aceita troca?", "há 1 dia"],
+      ["Elisa Modelo", "ainda disponível?", "há 3 horas"],
+      ["Fábio Teste", "faz por 40?", "há 1 hora"],
     ]);
+    expect(res.comments[0].url).toBe("https://www.facebook.com/groups/carrosexemplo/posts/111/?comment_id=1");
+  });
+
+  test("caps the number of comments", async () => {
+    const res = await runInPage(POST_DIALOG, buildFbCommentsScript(2, 3000), url, fakeCommentUi);
+    expect(res.comments).toHaveLength(2);
+  });
+
+  test("a post that says it has no comments returns none", async () => {
+    const html = `<html><body><div role="dialog"><div data-ad-rendering-role="story_message">Vendo Gol</div>
+      <span>Ainda não há nenhum comentário</span><span>Seja a primeira pessoa a comentar.</span></div></body></html>`;
+    expect(await runInPage(html, buildFbCommentsScript(30), url)).toEqual({ status: "ok", comments: [] });
   });
 });
 
