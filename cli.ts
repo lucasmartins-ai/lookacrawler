@@ -37,6 +37,8 @@ Commands:
   intent "<text>"             Score buying intent of a post/comment (pt-BR + EN).
   social-lookup <url>         Public profile meta tags (Instagram, LinkedIn, X); no login.
   intent-search "<query>"     Reddit buying-intent search (public .json, no key).
+  watch <url|@handle>         Profile and recent posts on TikTok, Instagram, Threads, Facebook or X
+                              (--platform for a bare handle, --limit N). Logged-in sites via the Chrome bridge.
   tiktok profile @handle      Recent videos of a public TikTok profile (yt-dlp, then a clean browser).
   tiktok trends               TikTok Creative Center trends for a region (headless browser).
   daemon <start|stop|status>  Manage the Maps scraper web-mode daemon (127.0.0.1 only).
@@ -708,6 +710,17 @@ async function runCli() {
     return;
   }
 
+  if (command === "watch") {
+    const { watchSocial } = await import("./watch.js");
+    const result = await watchSocial(positionalUrls[0] || "", {
+      platform: getOption(args, "--platform"),
+      limit: Number(getOption(args, "--limit")) || undefined,
+    });
+    await emitJson(args, result, "Watch output");
+    if (!result.ok) process.exit(1);
+    return;
+  }
+
   if (command === "tiktok") {
     const tt = await import("./tiktok.js");
     const [sub, target = ""] = positionalUrls;
@@ -869,6 +882,7 @@ function getPositionalArgs(args: string[], command: string): string[] {
     "--subreddit",
     "--period",
     "--kind",
+    "--platform",
   ]);
 
   const positional: string[] = [];

@@ -247,6 +247,22 @@ the binary). Nothing here logs in, signs requests or solves CAPTCHAs; from a
 headless browser TikTok often answers with a CAPTCHA (profiles) or 403 (Creative
 Center). Measurements and limits: [docs/specs/tiktok.md](docs/specs/tiktok.md).
 
+### Watch an account (TikTok, Instagram, Threads, Facebook, X)
+
+```bash
+bun run cli.ts watch https://x.com/AnthropicAI --limit 5
+bun run cli.ts watch @vetlucasmartins --platform instagram
+```
+
+Same as the MCP tool `watch_social`. One shape for every network:
+`{ ok, platform, handle, source, observedAt, profile: {name, bio, followers, following, posts}, posts: [{url, author, text, publishedAt, views, likes, comments, shares}] }`,
+or `{ ok: false, status: "invalid_input"|"bridge_offline"|"not_logged_in"|"blocked"|"error", reason }` (exit 1).
+Instagram, Threads, Facebook and X are read from the rendered page in the
+logged-in Chrome tab of the local bridge (`127.0.0.1:8765`), read-only. TikTok
+falls back to that tab when yt-dlp and the headless browser fail. Fields a page
+does not show stay `null`. A CAPTCHA is reported as `blocked` and never solved.
+Set `BRIDGE_SESSION` to keep a job in its own bridge tabs.
+
 ### 4. Docker Deployment
 
 ```bash
