@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
 import type { LinkFormat, ImageMode, PageAction } from "./extractor.js";
-import { getCachedPage, setCachedPage, buildCacheKey, pruneExpiredCache, db } from "./cache.js";
+import { getCachedPage, setCachedPage, buildCacheKey, db } from "./cache.js";
 import { validateTargetUrl } from "./security.js";
 import { getMetrics, recordMetric } from "./metrics.js";
 import { checkSseRequest, corsHeaders, resolveSseSecurity } from "./sse-security.js";
@@ -947,10 +947,6 @@ Without login Creative Center shows only the top few rows; 'video' is served for
  * Start input/output transport for MCP client communication (stdio or SSE HTTP)
  */
 async function main() {
-  // Expired rows are otherwise only removed when the same key is read again,
-  // so the cache file grows without bound.
-  pruneExpiredCache();
-
   const args = process.argv.slice(2);
   let transportMode = "stdio";
   let port = 3000;

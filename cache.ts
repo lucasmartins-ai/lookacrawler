@@ -18,6 +18,11 @@ const dbPath =
   process.env.LOOKACRAWLER_DB_PATH ||
   join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "lookacrawler", "crawler_cache.sqlite");
 
+/**
+ * Cache TTL: 24 hours in milliseconds
+ */
+export const TTL_MS = 24 * 60 * 60 * 1000;
+
 let warned = false;
 function cacheError(err: unknown): void {
   if (warned) return;
@@ -50,6 +55,14 @@ function openDb(): Database | null {
       )
     `);
     d.run("CREATE INDEX IF NOT EXISTS idx_pages_timestamp ON pages (timestamp)");
+    // Every process (CLI, MCP server, v2 API, library) drops expired pages once when it opens the cache.
+    // Before, only the MCP server did: a CLI-only install kept every page it ever read, past the TTL.
+    // ponytail: SQLite reuses the freed pages, so the file stops growing but does not shrink; VACUUM if it must.
+    try {
+      d.query("DELETE FROM pages WHERE timestamp < ?").run(Date.now() - TTL_MS);
+    } catch {
+      /* locked by another process: prune next time, the cache stays usable */
+    }
     return d;
   } catch (err) {
     cacheError(err);
@@ -58,11 +71,6 @@ function openDb(): Database | null {
 }
 
 export const db = openDb();
-
-/**
- * Cache TTL: 24 hours in milliseconds
- */
-export const TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface CacheKeyOptions {
   url: string;
