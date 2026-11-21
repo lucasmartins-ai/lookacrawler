@@ -29,6 +29,16 @@ describe("light DOM parse matches jsdom", () => {
     expect(based).toContain("[page](https://x.test/rel)");
   });
 
+  test("an <article> inside a <noscript> in <head> reaches the body", () => {
+    const md = processHtmlToMarkdown(`<html><head><noscript><article><p>${body}</p></article></noscript></head><body></body></html>`, { url: "https://x.test/" });
+    expect(md).toContain("Enough body text");
+  });
+
+  test("a <base> removed by pruning no longer rewrites hash links", () => {
+    const md = processHtmlToMarkdown(`<html><head></head><body><nav><base href="/docs/"></nav><article><p>${body} <a href="#top">top</a></p></article></body></html>`, { url: "https://x.test/start" });
+    expect(md).toContain("[top](#top)");
+  });
+
   test("CRLF is normalized like the HTML5 input stream", () => {
     expect(extractMetadata(`<html><head><meta name="description" content="a\r\nb"></head></html>`, "https://x.test/").description).toBe("a\nb");
   });

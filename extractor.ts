@@ -528,26 +528,31 @@ const { parse: parseHtml5, serialize: serializeHtml5 } = require("parse5") as ty
  * spec tree first; its well-formed serialization is what linkedom then parses.
  */
 function parseLightDocument(html: string, url: string): Document {
-  const { document } = parseHTML(serializeHtml5(parseHtml5(html)));
+  // jsdom parses with scripting off, so a <noscript> in <head> lets its body
+  // content fall through to <body>; parse5 defaults to scripting on.
+  const { document } = parseHTML(serializeHtml5(parseHtml5(html, { scriptingEnabled: false })));
   // parse5 keeps <template> content out of the tree, but its serialization
   // puts it back inline, so empty it again as jsdom shows it.
   for (const template of Array.from(document.querySelectorAll("template"))) template.replaceChildren();
   // linkedom has no documentURI and returns <base href> unresolved; Readability
-  // resolves links against both, so pin them to what jsdom reported.
+  // resolves links against both, so report what jsdom would. baseURI stays live
+  // like jsdom's: pruning can remove the <base> before Readability reads it.
   const documentURI = new URL(url).href;
-  let baseURI = documentURI;
-  const baseHref = document.querySelector("base[href]")?.getAttribute("href");
-  try {
-    if (baseHref) baseURI = new URL(baseHref, documentURI).href;
-  } catch {
-    /* jsdom ignores an invalid <base> too */
-  }
+  const baseURI = () => {
+    const baseHref = document.querySelector("base[href]")?.getAttribute("href");
+    try {
+      if (baseHref) return new URL(baseHref, documentURI).href;
+    } catch {
+      /* jsdom ignores an invalid <base> too */
+    }
+    return documentURI;
+  };
   // linkedom reads the title from <head> only; the spec (and jsdom) take the
   // first HTML <title> anywhere, whitespace collapsed.
   const titleElement = document.querySelector("title:not(svg title)");
   Object.defineProperties(document, {
     documentURI: { value: documentURI },
-    baseURI: { value: baseURI },
+    baseURI: { get: baseURI },
     title: { get: () => (titleElement?.textContent ?? "").replace(/[\t\n\f\r ]+/g, " ").trim() },
   });
   return document as unknown as Document;
