@@ -76,4 +76,15 @@ describe("LookaCrawler CLI Suite", () => {
       server.stop(true);
     }
   }, 20_000);
+
+  test("lookacrawler maps reports a missing scraper instead of '0 leads'", () => {
+    const out = `${require("node:os").tmpdir()}/maps-missing-${process.pid}.json`;
+    const proc = spawnSync("bun", ["run", "cli.ts", "maps", "dentista", "Goiania", "-o", out], {
+      encoding: "utf8",
+      env: { ...process.env, MAPS_LEADS_BIN: "/definitely/not/here/maps-leads" },
+    });
+    expect(proc.status).toBe(1);
+    expect(proc.stderr).toContain("maps-leads");
+    expect(proc.stdout).not.toContain("Found 0 leads");
+  }, 20_000);
 });
