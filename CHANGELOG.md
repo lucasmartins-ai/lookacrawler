@@ -115,6 +115,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README comparison table: Firecrawl pricing and MCP rows corrected from the
   pricing page and the firecrawl-mcp-server README (checked 2026-11-21), with
   links; the old "$16 to $99+/month" and "Community Wrapper" were out of date.
+- `crawl` sends `headers` and cookies only to the start origin. Pages on the same
+  host but another scheme or port are still crawled, without credentials.
 - Playwright is imported on first browser use instead of at module load
   (`loadChromium()` in `browser-manager.ts`, also used by `tiktok.ts`). With a
   static import every command, `--version` included, crashed wherever

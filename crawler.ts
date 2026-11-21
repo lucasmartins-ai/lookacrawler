@@ -275,8 +275,6 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
     mode = "fast",
     linkFormat,
     imageMode,
-    headers,
-    cookies,
     proxy,
     timeoutMs = 15000,
     ignoreRobots = false,
@@ -284,6 +282,9 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
 
   await validateTargetUrl(startUrl);
   const targetHost = new URL(startUrl).hostname;
+  // Same host is enough to crawl a page, but credentials go only to the exact
+  // start origin: never to http:// or another port of an https:// site.
+  const startOrigin = new URL(startUrl).origin;
 
   const passesFilter = makeUrlFilter(targetHost, includePatterns, excludePatterns);
   const robots = await loadRobots(new URL(startUrl).origin, { ignore: ignoreRobots, headers, cookies, proxy });
@@ -308,6 +309,9 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
 
   const crawlPage = async ({ url: currentUrl, depth }: { url: string; depth: number }): Promise<void> => {
     try {
+      const trusted = new URL(currentUrl).origin === startOrigin;
+      const headers = trusted ? options.headers : undefined;
+      const cookies = trusted ? options.cookies : undefined;
       let markdown: string;
       if (mode === "deep") {
         markdown = await extractDeep({

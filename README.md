@@ -251,9 +251,13 @@ names the field, never a silent no-op:
 - Map covers one host (`includeSubdomains: false`), sitemap plus home-page links;
   `search` ranks matching URLs first; `limit` up to 5,000.
 - Crawl `limit` up to 100 pages, `maxDiscoveryDepth` up to 5, at most 2 crawls
-  running. `includePaths`/`excludePaths` are lookacrawler substring patterns
-  (`*` wildcard), not regexes. robots.txt is not read yet, so a crawl only accepts
-  `ignoreRobotsTxt` when it is `true`. Jobs live in memory for an hour.
+  running. `includePaths`/`excludePaths` are plain path substrings; regex syntax
+  and quantifiers (`*`, `+`, `?`) get a 400. robots.txt is not read yet, so every
+  crawl must send `"ignoreRobotsTxt": true`. `headers` go only to the start
+  origin. Finished jobs live in memory for an hour, within a 200 MB budget.
+- `timeout` bounds the whole scrape or map (`408` when it runs out).
+  `metadata.statusCode` is always `200`. Fast mode turns an HTTP 4xx/5xx into an
+  error; browser mode (`stealth`, `actions`) still returns the rendered error page.
 - No `/v2/search`, batch scrape, crawl cancel, `location` or v0/v1 routes.
 
 ### 3. Google Maps engine (optional)

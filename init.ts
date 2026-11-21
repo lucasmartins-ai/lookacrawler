@@ -1,4 +1,4 @@
-import { chmod, copyFile, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -114,12 +114,15 @@ export async function runInit(opts: { home?: string; dryRun?: boolean; entry?: M
       results.push({ agent: t.agent, path: t.path, status: "changed" });
       continue;
     }
+    // The backup is the exact text the change was planned on, private from the
+    // first byte (it can hold API keys). Writes go to the symlink's target so a
+    // dotfiles-managed config keeps its link.
     const backup = `${t.path}.${NAME}-backup-${stamp}`;
-    await copyFile(t.path, backup);
-    await chmod(backup, 0o600);
-    const tmp = `${t.path}.${NAME}-tmp-${process.pid}`;
-    await writeFile(tmp, p.next, { mode: (await stat(t.path)).mode & 0o777 });
-    await rename(tmp, t.path);
+    await writeFile(backup, text, { mode: 0o600, flag: "wx" });
+    const real = await realpath(t.path);
+    const tmp = `${real}.${NAME}-tmp-${process.pid}`;
+    await writeFile(tmp, p.next, { mode: (await stat(real)).mode & 0o777 });
+    await rename(tmp, real);
     results.push({ agent: t.agent, path: t.path, status: "added", diff: p.diff, backup });
   }
   return results;

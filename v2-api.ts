@@ -48,6 +48,12 @@ const MAX_CRAWL_LIMIT = 100;
 const MAX_RUNNING_CRAWLS = 2;
 const MAX_STORED_CRAWLS = 50;
 const CRAWL_TTL_MS = 60 * 60 * 1000;
+/**
+ * Finished crawls keep their Markdown in memory until they expire, so they share
+ * a budget. ponytail: running crawls are bounded only by limit × the per-page
+ * response cap; stream results to disk if crawls must be large.
+ */
+const MAX_STORED_BYTES = 200 * 1024 * 1024;
 
 class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -160,6 +166,7 @@ function parseScrapeOptions(body: Body, where: string, allowBrowserSteps: boolea
     actions.push({ type: "wait", milliseconds: body.waitFor });
   }
   if (allowBrowserSteps && body.actions != null) actions.push(...parseActions(body.actions));
+  if (actions.length > 20) throw bad(`${where}: "waitFor" plus "actions" make more than 20 browser steps`);
   // "auto" is what fast already does: escalate to the browser when anti-bot blocks it.
   // Firecrawl's proxy is a tier name, never a proxy URL, so it never reaches our proxy option.
   const browser = body.proxy === "stealth" || body.proxy === "enhanced" || actions.length > 0;
@@ -211,7 +218,9 @@ function toDocument(markdown: string, url: string, formats: Set<string>) {
 
 interface CrawlJob {
   status: "scraping" | "completed" | "failed";
-  createdAt: number;
+  /** Set when the crawl ends; the result expires CRAWL_TTL_MS after that. */
+  finishedAt?: number;
+  bytes: number;
   result?: CrawlWebsiteResult;
   error?: string;
   formats: Set<string>;
@@ -222,11 +231,13 @@ const jobs = new Map<string, CrawlJob>();
 
 function pruneJobs(now = Date.now()): void {
   for (const [id, job] of jobs) {
-    if (now - job.createdAt > CRAWL_TTL_MS && job.status !== "scraping") jobs.delete(id);
+    if (job.finishedAt && now - job.finishedAt > CRAWL_TTL_MS) jobs.delete(id);
   }
 }
 
 /** Test hook. */
+const storedBytes = () => [...jobs.values()].reduce((sum, j) => sum + j.bytes, 0);
+
 export function resetCrawlJobs(): void {
   jobs.clear();
 }
@@ -238,8 +249,6 @@ const CRAWL_NOOPS: Record<string, Check> = {
   allowSubdomains: is(false),
   ignoreQueryParameters: is(false),
   regexOnFullURL: is(false),
-  // robots.txt is not consulted yet, so only an explicit opt-out is truthful.
-  ignoreRobotsTxt: is(true),
   delay: is(0),
 };
 
@@ -255,15 +264,23 @@ async function startCrawl(body: Body, deps: V2Deps, baseUrl: string) {
       excludePaths: (v) => Array.isArray(v) && v.every(isString),
       maxConcurrency: intIn(1, 10),
       scrapeOptions: (v) => !!v && typeof v === "object" && !Array.isArray(v),
+      ignoreRobotsTxt: is(true),
     },
     CRAWL_NOOPS,
     "crawl"
   );
+  // robots.txt is not read yet, and Firecrawl's default is to obey it, so the
+  // caller has to opt out explicitly rather than get a crawl that ignores it.
+  if (body.ignoreRobotsTxt !== true) {
+    throw bad('crawl: lookacrawler does not read robots.txt yet; send "ignoreRobotsTxt": true to crawl anyway');
+  }
   const plan = parseScrapeOptions((body.scrapeOptions as Body) ?? {}, "crawl.scrapeOptions", false);
   const includePatterns = (body.includePaths as string[] | undefined) ?? [];
   const excludePatterns = (body.excludePaths as string[] | undefined) ?? [];
   // Firecrawl paths are regexes; ours are substrings with * wildcards. Fail now, not inside the job.
   const { compileUrlPatterns } = await import("./crawler.js");
+  const regexy = [...includePatterns, ...excludePatterns].find((p) => /[*+?]/.test(p));
+  if (regexy) throw bad(`crawl: path "${regexy}" uses a regex quantifier; lookacrawler matches plain path substrings only`);
   try {
     compileUrlPatterns(includePatterns, "include");
     compileUrlPatterns(excludePatterns, "exclude");
@@ -274,10 +291,11 @@ async function startCrawl(body: Body, deps: V2Deps, baseUrl: string) {
   pruneJobs();
   const running = [...jobs.values()].filter((j) => j.status === "scraping").length;
   if (running >= MAX_RUNNING_CRAWLS) throw new HttpError(429, `Too many running crawls (max ${MAX_RUNNING_CRAWLS})`);
+  if (storedBytes() >= MAX_STORED_BYTES) throw new HttpError(429, "Stored crawl results are at their memory budget; they expire an hour after finishing");
   if (jobs.size >= MAX_STORED_CRAWLS) throw new HttpError(429, `Too many stored crawls (max ${MAX_STORED_CRAWLS}); they expire after an hour`);
 
   const id = randomUUID();
-  const job: CrawlJob = { status: "scraping", createdAt: Date.now(), formats: plan.formats };
+  const job: CrawlJob = { status: "scraping", bytes: 0, formats: plan.formats };
   jobs.set(id, job);
   deps
     .crawl({
@@ -293,9 +311,20 @@ async function startCrawl(body: Body, deps: V2Deps, baseUrl: string) {
       linkFormat: "inline",
     })
     .then(
-      (result) => Object.assign(job, { status: "completed", result }),
+      (result) => {
+        const bytes = result.pages.reduce((sum, p) => sum + p.markdown.length, 0);
+        const firstError = result.pages.find((p) => p.error)?.error;
+        if (!result.pages.some((p) => !p.error)) {
+          Object.assign(job, { status: "failed", error: firstError || "No page could be scraped" });
+        } else if (storedBytes() + bytes > MAX_STORED_BYTES) {
+          Object.assign(job, { status: "failed", error: `Crawl output (${Math.round(bytes / 1e6)} MB) is over the memory budget; lower "limit"` });
+        } else {
+          Object.assign(job, { status: "completed", result, bytes });
+        }
+      },
       (err) => Object.assign(job, { status: "failed", error: err instanceof Error ? err.message : String(err) })
-    );
+    )
+    .finally(() => (job.finishedAt = Date.now()));
   return { success: true, id, url: `${baseUrl}/v2/crawl/${id}` };
 }
 
@@ -311,7 +340,7 @@ function crawlStatus(id: string) {
     total: pages.length,
     completed: ok.length,
     creditsUsed: 0,
-    expiresAt: new Date(job.createdAt + CRAWL_TTL_MS).toISOString(),
+    expiresAt: job.finishedAt ? new Date(job.finishedAt + CRAWL_TTL_MS).toISOString() : null,
     next: null,
     data: ok.map((p) => toDocument(p.markdown, p.url, job.formats)),
     ...(job.error ? { error: job.error } : {}),
@@ -343,7 +372,7 @@ async function readJson(req: IncomingMessage): Promise<Body> {
 async function scrape(body: Body, deps: V2Deps) {
   const url = await requireUrl(body, "scrape");
   const plan = parseScrapeOptions(body, "scrape", true, { url: () => true });
-  const markdown = await deps.scrape({ url, ...plan.request });
+  const markdown = await withDeadline(deps.scrape({ url, ...plan.request }), plan.request.timeoutMs, "Scrape");
   return { success: true, data: toDocument(markdown, url, plan.formats) };
 }
 
@@ -366,20 +395,28 @@ async function map(body: Body, deps: V2Deps) {
     },
     "map"
   );
-  const timeoutMs = body.timeout as number | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const result = await Promise.race([
-    deps.map({ url, maxUrls: (body.limit as number | undefined) ?? MAX_MAP_LIMIT }),
-    new Promise<never>((_, reject) => {
-      if (timeoutMs) timer = setTimeout(() => reject(new HttpError(408, `Map timed out after ${timeoutMs} ms`)), timeoutMs);
-    }),
-  ]).finally(() => clearTimeout(timer));
-  let urls = result.urls.map((u) => u.url);
-  if (body.ignoreQueryParameters !== false) urls = [...new Set(urls.filter((u) => !u.includes("?")))];
+  const limit = (body.limit as number | undefined) ?? MAX_MAP_LIMIT;
   const search = typeof body.search === "string" ? body.search.toLowerCase() : "";
+  // ponytail: the deadline answers 408 but does not abort discovery still in flight; pass a signal into mapWebsite if that matters.
+  // With a search, fetch the full candidate list so the limit applies after ranking.
+  const result = await withDeadline(deps.map({ url, maxUrls: search ? MAX_MAP_LIMIT : limit }), body.timeout as number | undefined, "Map");
+  let urls = result.urls.map((u) => u.url);
+  if (body.ignoreQueryParameters !== false) urls = urls.map((u) => u.split("?")[0]);
+  urls = [...new Set(urls)];
   // ponytail: substring relevance, not Firecrawl's ranking; stable sort keeps sitemap order within groups.
   if (search) urls.sort((a, b) => Number(b.toLowerCase().includes(search)) - Number(a.toLowerCase().includes(search)));
-  return { success: true, links: urls.map((u) => ({ url: u })) };
+  return { success: true, links: urls.slice(0, limit).map((u) => ({ url: u })) };
+}
+
+async function withDeadline<T>(work: Promise<T>, ms: number | undefined, what: string): Promise<T> {
+  if (!ms) return work;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new HttpError(408, `${what} timed out after ${ms} ms`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 function send(res: ServerResponse, status: number, payload: unknown): void {

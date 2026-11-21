@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInit } from "./init.js";
@@ -70,6 +70,16 @@ describe("lookacrawler init", () => {
     expect(await readFile(join(home, ".claude.json"), "utf8")).toBe("{ not json");
     expect(JSON.parse(await readFile(join(home, ".cursor/mcp.json"), "utf8")).mcpServers.lookacrawler.command).toBe("old");
     expect((await readdir(home)).sort()).toEqual([".claude.json", ".codex", ".cursor"]);
+  });
+
+  it("writes through a symlinked config and keeps the link", async () => {
+    await seed({ "dotfiles/codex.toml": 'model = "gpt"\n' });
+    await mkdir(join(home, ".codex"));
+    await symlink(join(home, "dotfiles/codex.toml"), join(home, ".codex/config.toml"));
+    const [, , r] = await runInit({ home, entry, now });
+    expect(r.status).toBe("added");
+    expect((await lstat(join(home, ".codex/config.toml"))).isSymbolicLink()).toBe(true);
+    expect((Bun.TOML.parse(await readFile(join(home, "dotfiles/codex.toml"), "utf8")) as any).mcp_servers.lookacrawler).toEqual(entry);
   });
 
   it("is idempotent", async () => {
