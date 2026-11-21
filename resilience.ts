@@ -260,7 +260,9 @@ export async function retryWithBackoff<T>(
         throw error;
       }
       const message = error instanceof Error ? error.message : String(error);
-      const isRetryableStatus = message.includes("429") || message.includes("503") ||
+      // The status code only counts where a status sits: a bare "429" also matched URLs in the
+      // message (a robots veto on port 44290 was retried 3 times, CI 21/11/2026).
+      const isRetryableStatus = /(?:^|HTTP(?: Status)? )(?:429|503)\b/.test(message) ||
         message.includes("Rate Limited") || message.includes("Service Unavailable");
 
       if (!isRetryableStatus) {

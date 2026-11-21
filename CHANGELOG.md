@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retries: a `429` or `503` inside a URL no longer makes an error retryable.
+  A robots.txt veto on a URL with port 44290 was fetched 4 times instead of
+  once; only `HTTP 429`, `HTTP Status 503` or a message that starts with the
+  code counts as a status now.
 - `maps` / `discover_local_leads`: a scraper that exits before reading the
   query no longer crashes the CLI or MCP server with an uncaught `EPIPE`.
 - CI runs on Bun 1.4.5. On 1.3.14, `bun test` sometimes missed a spawned
