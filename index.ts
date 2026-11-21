@@ -1058,6 +1058,10 @@ async function main() {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "SSE session not established" }));
         }
+      } else if (url.pathname.startsWith("/v2/")) {
+        // Firecrawl v2-compatible REST routes, behind the same auth as above.
+        const { handleV2 } = await import("./v2-api.js");
+        await handleV2(req, res, url.pathname);
       } else {
         res.writeHead(404, { "Content-Type": "text/plain" });
         res.end("Not Found");

@@ -10,7 +10,7 @@
  *   status "blocked" and is never retried.
  */
 
-import { chromium } from "playwright";
+import { loadChromium } from "./browser-manager.js";
 
 export interface TikTokVideo {
   id: string;
@@ -179,7 +179,7 @@ export type Browse = (url: string, match: RegExp) => Promise<PageCapture>;
  * responses the page itself requests (read-only). Always closes the browser.
  */
 const browse: Browse = async (url, match) => {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await (await loadChromium()).launch({ headless: true });
   try {
     const page = await (await browser.newContext({ locale: "en-US" })).newPage();
     const bodies: PageCapture["bodies"] = [];

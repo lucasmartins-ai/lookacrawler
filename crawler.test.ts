@@ -261,3 +261,27 @@ describe("Autonomous Web Crawler & Mapper (crawler.ts)", () => {
     });
   });
 });
+
+describe("crawl credentials", () => {
+  test("headers and cookies reach only the start origin, not another port of the same host", async () => {
+    process.env.LOOKACRAWLER_ALLOW_LOCAL = "true";
+    const seen: Record<string, string | null> = {};
+    const page = (body: string) => new Response(`<html><body><h1>Page</h1><p>${body}</p></body></html>`, { headers: { "Content-Type": "text/html" } });
+    const other = Bun.serve({ port: 0, fetch(req) { seen.other = req.headers.get("authorization"); return page("other origin"); } });
+    const start = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.start = req.headers.get("authorization");
+        return page(`<a href="http://127.0.0.1:${other.port}/leak">next</a>`);
+      },
+    });
+    try {
+      const result = await crawlWebsite({ startUrl: `http://127.0.0.1:${start.port}/`, maxPages: 2, maxDepth: 1, headers: { Authorization: "Bearer s3cret" } });
+      expect(result.pages.map((p) => p.url)).toContain(`http://127.0.0.1:${other.port}/leak`);
+      expect(seen).toEqual({ start: "Bearer s3cret", other: null });
+    } finally {
+      start.stop(true);
+      other.stop(true);
+    }
+  });
+});
