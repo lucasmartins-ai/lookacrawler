@@ -1,6 +1,7 @@
 import type { Browser } from "playwright";
+import { realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { buildStealthInit } from "./stealth.js";
 import { getEgressGuard } from "./egress-guard.js";
 import { isLocalAccessAllowed, validateProxyUrl } from "./security.js";
@@ -195,9 +196,15 @@ async function importPlaywright(): Promise<typeof import("playwright")> {
   if (!compiled) return import("playwright");
   const dirs = [process.env.LOOKACRAWLER_PLAYWRIGHT_DIR, dirname(process.execPath)].filter((d): d is string => !!d);
   for (const dir of dirs) {
+    let found: string, modules: string;
     try {
-      return await import(createRequire(join(resolve(dir), "noop.js")).resolve("playwright"));
-    } catch {}
+      modules = (await realpath(join(resolve(dir), "node_modules"))) + sep;
+      found = await realpath(createRequire(join(resolve(dir), "noop.js")).resolve("playwright"));
+    } catch {
+      continue;
+    }
+    // resolve() also walks parent folders; accept only this folder's node_modules.
+    if (found.startsWith(modules)) return import(found);
   }
   throw new Error(`playwright not found under ${dirs.join(" or ")}`);
 }

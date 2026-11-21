@@ -312,7 +312,8 @@ async function startCrawl(body: Body, deps: V2Deps, baseUrl: string) {
     })
     .then(
       (result) => {
-        const bytes = result.pages.reduce((sum, p) => sum + p.markdown.length, 0);
+        // ponytail: 2 bytes per UTF-16 code unit, an upper bound on what V8 keeps.
+        const bytes = result.pages.reduce((sum, p) => sum + 2 * p.markdown.length, 0);
         const firstError = result.pages.find((p) => p.error)?.error;
         if (!result.pages.some((p) => !p.error)) {
           Object.assign(job, { status: "failed", error: firstError || "No page could be scraped" });
