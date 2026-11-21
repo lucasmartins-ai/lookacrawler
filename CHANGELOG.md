@@ -53,8 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer costs the emails and phones found in the raw HTML.
 - `text/markdown` and `text/plain` responses pass through as-is (the HTML
   pipeline flattened their code blocks). PDFs are converted to text with
-  `unpdf` (pinned 2.1.0), detected by Content-Type or `%PDF-` magic bytes,
-  first 50 pages.
+  `unpdf` (pinned 2.1.0), detected by Content-Type or `%PDF-` magic bytes:
+  first 50 pages, 2M characters, 15 s; a PDF that fails to parse is not retried.
 - A site could send `x-lookacrawler-blocked` itself and have its own answer
   read as an egress-guard refusal. The guard now marks its answers with a
   random per-process token. A redirect to a host that does not resolve is

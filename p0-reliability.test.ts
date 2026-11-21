@@ -130,6 +130,12 @@ describe("content-type routing", () => {
     }
   });
 
+  test("a broken PDF fails once as parse_error", async () => {
+    const err = (await documentToMarkdown(doc("", "application/pdf", Buffer.from("%PDF-1.4\ngarbage")), { url: "https://x.test/b.pdf" }).catch((e) => e)) as Error;
+    expect(err.message).toStartWith("PDF could not be parsed");
+    expect(classifyFailure(err)).toBe("parse_error");
+  });
+
   test("HTML still goes through the HTML pipeline", async () => {
     const html = `<html><body><article><h1>Clinic</h1><p>${"Real text here. ".repeat(20)}</p></article></body></html>`;
     const out = await documentToMarkdown(doc(html, "text/html"), { url: "https://x.test/" });

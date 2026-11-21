@@ -159,25 +159,54 @@ function isPdfDocument(contentType: string, bytes: Buffer): boolean {
   return mimeOf(contentType) === "application/pdf" || bytes.subarray(0, 5).toString("latin1") === "%PDF-";
 }
 
-// ponytail: fixed page cap; make it an option if someone needs whole books.
+// ponytail: fixed caps; make them options if someone needs whole books.
 const MAX_PDF_PAGES = 50;
+const MAX_PDF_TEXT_CHARS = 2_000_000;
+const PDF_DEADLINE_MS = 15_000;
 
+/**
+ * Text of the first MAX_PDF_PAGES pages. The input is already capped by
+ * getMaxResponseBytes, but compressed streams inflate, so the whole parse runs
+ * against one deadline and the collected text is capped.
+ * ponytail: the deadline is checked between pdf.js async steps; a single
+ * synchronous inflate inside pdf.js cannot be interrupted in-process. Move
+ * parsing to a subprocess with a memory limit if hostile PDFs show up.
+ */
 async function pdfToText(bytes: Buffer): Promise<string> {
   const { getDocumentProxy } = await import("unpdf");
-  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const deadline = Date.now() + PDF_DEADLINE_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const withinDeadline = <T>(step: Promise<T>): Promise<T> =>
+    Promise.race([
+      step,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("time limit exceeded")), Math.max(0, deadline - Date.now()));
+      }),
+    ]).finally(() => clearTimeout(timer));
+
+  let pdf: Awaited<ReturnType<typeof getDocumentProxy>> | undefined;
   try {
+    pdf = await withinDeadline(getDocumentProxy(new Uint8Array(bytes)));
     const pages: string[] = [];
+    let chars = 0;
     for (let i = 1; i <= Math.min(pdf.numPages, MAX_PDF_PAGES); i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
+      const page = await withinDeadline(pdf.getPage(i));
+      const content = await withinDeadline(page.getTextContent());
       const text = content.items.map((item) => ("str" in item ? item.str + (item.hasEOL ? "\n" : "") : "")).join("").trim();
       page.cleanup();
+      if (chars + text.length > MAX_PDF_TEXT_CHARS) {
+        pages.push(`[truncated: text limit reached at page ${i} of ${pdf.numPages}]`);
+        return pages.join("\n\n---\n\n");
+      }
+      chars += text.length;
       if (text) pages.push(text);
     }
     if (pdf.numPages > MAX_PDF_PAGES) pages.push(`[truncated: first ${MAX_PDF_PAGES} of ${pdf.numPages} pages]`);
     return pages.join("\n\n---\n\n");
+  } catch (err) {
+    throw new Error(`PDF could not be parsed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300));
   } finally {
-    await pdf.loadingTask.destroy();
+    await pdf?.loadingTask.destroy();
   }
 }
 

@@ -25,6 +25,7 @@ const RULES: Array<[FailureStatus, RegExp]> = [
   ["connection_failed", /^Connection to \S+ failed/],
   // A site that answered is never dead, whatever its status text says.
   ["http_error", /^HTTP \d{3}/],
+  ["parse_error", /^PDF could not be parsed/],
   ["dead_domain", /ENOTFOUND|Could not resolve|DNS lookup failed/i],
   ["blocked_private", /private or local hosts/i],
   ["invalid_input", /Target URL is invalid|Only HTTP\/HTTPS|cannot contain credentials|Missing target URL/i],
