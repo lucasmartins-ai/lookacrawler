@@ -266,7 +266,9 @@ export async function retryWithBackoff<T>(
       if (!isRetryableStatus) {
         if (/HTTP (?:400|401|403|404|405|406|410|413|422)/.test(message) ||
             message.includes("Anti-Bot protection") || message.includes("Only HTTP/HTTPS") ||
-            message.includes("private or local hosts") || message.includes("selector")) {
+            message.includes("private or local hosts") || message.includes("selector") ||
+            // Same bytes, same parse result: retrying only repeats the expensive work.
+            message.includes("PDF could not be parsed")) {
           throw error;
         }
       }

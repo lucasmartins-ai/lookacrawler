@@ -2,6 +2,9 @@ import { mock, setDefaultTimeout } from "bun:test";
 
 // Several suites spawn `bun cli.ts`; on a cold CI runner the first spawn has
 // taken over 5 s (bun's default), failing tests that finish in ~30 ms locally.
+// Bun 1.3.14 does not apply this to every file when several run (the first
+// file kept 5 s), so `bun test --timeout 20000` in package.json and CI is what
+// holds; bunfig's [test] timeout key had no effect either.
 setDefaultTimeout(20_000);
 
 // Hermetic tests: never touch the real on-disk cache (clearCache() would wipe it,

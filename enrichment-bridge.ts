@@ -7,6 +7,7 @@ import { countryToRegion, findPhones, normalizePhone } from "./quality/phone.js"
 import { cleanEmails, findEmails } from "./quality/email.js";
 import { formatCnpj } from "./quality/cnpj.js";
 import { jevAsk, type JevAsk } from "./jev.js";
+import { classifyFailure, type FailureStatus } from "./errors.js";
 
 export interface EnrichedLeadResult {
   title: string;
@@ -37,6 +38,10 @@ export interface EnrichedLeadResult {
   sourcePagesCrawled: string[];
   enrichmentSuccess: boolean;
   error?: string;
+  /** Why enrichment failed, when it did (see errors.ts). */
+  status?: FailureStatus;
+  /** Non-fatal problems: the result is usable but partial. */
+  warnings?: string[];
 
   // Normalized details
   /** DV-valid CNPJs printed on the company site, unmasked. */
@@ -186,13 +191,17 @@ export async function deepEnrichLead(
 
   if (!lead.web_site || !lead.web_site.startsWith("http")) {
     result.error = "Lead has no valid website to enrich.";
+    result.status = "invalid_input";
     return result;
   }
 
   try {
     await validateTargetUrl(lead.web_site);
   } catch (secErr: any) {
-    result.error = `Website blocked by security policy: ${secErr?.message}`;
+    // validateTargetUrl also resolves DNS: a dead domain is not a policy block.
+    result.status = classifyFailure(secErr);
+    const policy = result.status === "blocked_private" || result.status === "invalid_input";
+    result.error = `${policy ? "Website blocked by security policy" : "Website unreachable"}: ${secErr?.message}`;
     return result;
   }
 
@@ -221,8 +230,14 @@ export async function deepEnrichLead(
     }
 
     if (!homeMarkdown && rawHtml !== undefined) {
-      homeMarkdown = processHtmlToMarkdown(rawHtml, { url: lead.web_site, linkFormat, imageMode });
-      setCachedPage(cacheKey, homeMarkdown);
+      // Contacts come from the raw html below; a page the markdown pipeline
+      // cannot convert must not cost us its emails and phones.
+      try {
+        homeMarkdown = processHtmlToMarkdown(rawHtml, { url: lead.web_site, linkFormat, imageMode });
+        setCachedPage(cacheKey, homeMarkdown);
+      } catch (convErr: any) {
+        result.warnings = [`HTML could not be converted to markdown: ${convErr?.message}`];
+      }
     }
     homeMarkdown = homeMarkdown || "";
 
@@ -335,6 +350,7 @@ export async function deepEnrichLead(
     result.enrichmentSuccess = true;
   } catch (err: any) {
     result.error = `Failed to enrich lead via LookaCrawler: ${err?.message}`;
+    result.status = classifyFailure(err);
   }
 
   return result;
