@@ -16,8 +16,16 @@
 const BRIDGE = process.env.ANTIGRAVITY_BRIDGE_URL || "http://127.0.0.1:8765";
 const IG_APP_ID = "936619743392459";
 
-export type SocialSite = "instagram" | "facebook";
-const SITE_DOMAIN: Record<SocialSite, string> = { instagram: "instagram.com", facebook: "facebook.com" };
+export type SocialSite = "instagram" | "facebook" | "threads" | "x";
+/** Sites the bridge can open; TikTok is read here only by watch.ts (no doctor probe: its session cookie is HttpOnly). */
+export type BridgeSite = SocialSite | "tiktok";
+const SITE_DOMAIN: Record<BridgeSite, string> = {
+  instagram: "instagram.com",
+  facebook: "facebook.com",
+  threads: "threads.com",
+  x: "x.com",
+  tiktok: "tiktok.com",
+};
 
 // ── bridge client ────────────────────────────────────────────────────────────
 
@@ -38,22 +46,37 @@ async function bridge(payload: Record<string, unknown>, timeoutMs = 15_000): Pro
     method: "POST",
     keepalive: false,
     headers: { "Content-Type": "application/json", Connection: "close" },
-    body: JSON.stringify(payload),
+    // BRIDGE_SESSION keeps a job in its own tab group (bridge rules §6); unset = shared tabs.
+    body: JSON.stringify(process.env.BRIDGE_SESSION ? { session: process.env.BRIDGE_SESSION, ...payload } : payload),
     signal: AbortSignal.timeout(timeoutMs),
   });
   return r.json();
 }
 
+// The tab each site was last navigated in. Without it, evalOn's domain match can pick another tab
+// of the same site (a DM tab another job has open) and read the wrong page.
+const navigatedTab = new Map<BridgeSite, number>();
+
 /** Run a page script in the site's existing tab. The bridge waits ~8s, so scripts stay short. */
-async function evalOn(site: SocialSite, code: string): Promise<any> {
-  const r = await bridge({ action: "CDP_EVAL", matchDomain: SITE_DOMAIN[site], code });
+export async function evalOn(site: BridgeSite, code: string): Promise<any> {
+  const tabId = navigatedTab.get(site);
+  const d = SITE_DOMAIN[site];
+  // A pinned tab may have been sent elsewhere since (another job, a redirect): read only if it is still on the site.
+  const guarded = `(() => { const h = location.hostname; if (h !== ${JSON.stringify(d)} && !h.endsWith(${JSON.stringify("." + d)})) return { __wrongSite: h }; return ${code}; })()`;
+  const r = await bridge(tabId ? { action: "CDP_EVAL", tabId, code: guarded } : { action: "CDP_EVAL", matchDomain: d, code });
+  if (tabId && r?.success === false && /nenhuma aba|no tab/i.test(r.error || "")) {
+    navigatedTab.delete(site); // the pinned tab was closed: go back to the site's open tab
+    return evalOn(site, code);
+  }
   if (!r || r.success === false) throw new Error(r?.error || "bridge eval failed");
+  if (r.result?.__wrongSite) throw new Error(`bridge tab for ${site} is now on ${r.result.__wrongSite}`);
   return r.result;
 }
 
-async function navigate(site: SocialSite, url: string, settleMs = 5000): Promise<void> {
+export async function navigate(site: BridgeSite, url: string, settleMs = 5000): Promise<void> {
   const r = await bridge({ action: "NAVIGATE", matchDomain: SITE_DOMAIN[site], url, active: false });
   if (!r || r.success === false) throw new Error(r?.error || `could not open ${url}`);
+  if (typeof r.tabId === "number") navigatedTab.set(site, r.tabId);
   await Bun.sleep(settleMs);
 }
 
@@ -65,7 +88,8 @@ async function listTabs(): Promise<Array<{ id: number; url: string }>> {
 // ── doctor ───────────────────────────────────────────────────────────────────
 
 /** Session cookies that are readable from page JS and only exist when logged in. */
-export const LOGIN_PROBE = `(() => ({ ig: /(^|; )ds_user_id=/.test(document.cookie), fb: /(^|; )c_user=/.test(document.cookie) }))()`;
+export const LOGIN_PROBE = `(() => ({ ig: /(^|; )ds_user_id=/.test(document.cookie), fb: /(^|; )c_user=/.test(document.cookie), x: /(^|; )twid=/.test(document.cookie) }))()`;
+const LOGIN_KEY: Record<SocialSite, "ig" | "fb" | "x"> = { instagram: "ig", threads: "ig", facebook: "fb", x: "x" };
 
 /**
  * Side-effect free: reads bridge status and the tabs already open; never
@@ -76,14 +100,14 @@ export async function socialDoctor() {
   const sites: Record<string, string> = {};
   if (status.ok) {
     const tabs = await listTabs();
-    for (const site of Object.keys(SITE_DOMAIN) as SocialSite[]) {
+    for (const site of Object.keys(LOGIN_KEY) as SocialSite[]) {
       if (!tabs.some((t) => t.url.includes(SITE_DOMAIN[site]))) {
         sites[site] = "sem aba aberta (abra o site logado no Chrome)";
         continue;
       }
       try {
         const probe = await evalOn(site, LOGIN_PROBE);
-        const logged = site === "instagram" ? probe?.ig : probe?.fb;
+        const logged = probe?.[LOGIN_KEY[site]];
         sites[site] = logged ? "logado" : "aba aberta, mas sem login";
       } catch (e: any) {
         sites[site] = `erro: ${e.message}`;

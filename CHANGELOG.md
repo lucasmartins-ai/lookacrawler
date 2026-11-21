@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `watch <url|@handle> [--platform P] [--limit N]` (MCP `watch_social`): profile and recent
+  posts of one account on TikTok, Instagram, Threads, Facebook or X in one shape,
+  `{ok, platform, handle, source, observedAt, profile{name,bio,followers,following,posts},
+  posts[{url,author,text,publishedAt,views,likes,comments,shares}]}` or
+  `{ok:false, status, reason}`. Logged-in sites are read from the rendered page in the
+  Chrome bridge tab (read-only, no internal APIs); TikTok tries yt-dlp, then the headless
+  browser, then the bridge tab. A field the page does not show is `null`, never a guess:
+  the Instagram grid no longer shows counts, Facebook shows no machine dates. A CAPTCHA is
+  `blocked` and is never solved. Checked live 21/11/2026 on X, Instagram, Threads,
+  Facebook and TikTok (profile; TikTok then showed a CAPTCHA, reported as `blocked`).
 - `tiktok profile @handle [--limit N]` and `tiktok trends [--region BR] [--period 7|30]
   [--kind hashtag|video]`, also as MCP tools `tiktok_profile` / `tiktok_trends`.
   Profiles come from `yt-dlp --flat-playlist`, falling back to a plain headless
@@ -52,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bridge reads (`social`, `watch`) run in the tab the command navigated: the domain match
+  could pick another tab of the same site, such as a DM tab another job had open.
 - `social fb-posts` / `fb-search` read the 10/2026 Facebook layout. Post body from
   `[data-ad-rendering-role=story_message]` (fallback `[data-ad-preview=message]`),
   permalink from the bare timestamp link that Facebook fills on hover (search:

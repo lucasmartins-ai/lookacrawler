@@ -693,6 +693,27 @@ Tries yt-dlp first, then a plain browser reading the page's own data. Returns {o
   );
 
   server.registerTool(
+    "watch_social",
+    {
+      description: `Read-only view of one social account: profile (name, bio, followers, following, posts) and recent posts (url, author, text, publishedAt, views, likes, comments, shares), same shape for TikTok, Instagram, Threads, Facebook and X.
+TikTok is public (no login). Instagram, Threads, Facebook and X are read from the user's logged-in Chrome through the local bridge; nothing is clicked or posted. A value the page does not show is null. Returns {ok:false, status:"invalid_input"|"bridge_offline"|"not_logged_in"|"blocked"|"error", reason} on failure.`,
+      inputSchema: {
+        target: z.string().min(1).max(300).describe("Profile URL, or a handle ('@name') together with platform."),
+        platform: z.enum(["tiktok", "instagram", "threads", "facebook", "x"]).optional().describe("Needed only when target is a handle."),
+        limit: z.number().int().min(1).max(50).default(12).optional().describe("Maximum posts (default: 12)."),
+      },
+    },
+    async ({ target, platform, limit }) => {
+      try {
+        const { watchSocial } = await import("./watch.js");
+        return jsonResult(await watchSocial(target, { platform, limit }));
+      } catch (error: any) {
+        return failure("Watch social", error);
+      }
+    }
+  );
+
+  server.registerTool(
     "tiktok_trends",
     {
       description: `TikTok Creative Center trend list for a region (public page, no login): rank, kind, id, name, url, views, posts, author, createTime.
