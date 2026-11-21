@@ -218,8 +218,10 @@ export async function mapWebsite(options: MapWebsiteOptions): Promise<MapWebsite
           /* ignore unparseable links */
         }
       }
-    } catch {
-      /* home page fetch failed */
+    } catch (err) {
+      // A redirect into a disallowed path is a robots skip, not a silent failure.
+      const veto = /^Redirect to (\S+) is disallowed by robots\.txt/.exec(err instanceof Error ? err.message : "");
+      if (veto) skippedByRobots.add(veto[1]);
     }
   }
 

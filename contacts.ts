@@ -131,8 +131,9 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
       rootPage = doc.url ?? rootPage; // evidence names the page after redirects
       rootObservedAt = new Date().toISOString();
     }
-    const root = parseContactsFromHtml(rootHtml, parsedRoot, { pageUrl: rootPage, defaultRegion });
-    // Same spelling the parser stamps on phones (`ContactPhone.url`).
+    // Links resolve against the requested URL as before: resolving them on a
+    // cross-origin redirect target would replay the caller's headers/cookies there.
+    const root = parseContactsFromHtml(rootHtml, parsedRoot, { defaultRegion });
     merged.add(root, rootPage, rootObservedAt);
 
     // 2. Visit the best-ranked contact subpages if deepScan is enabled
@@ -145,7 +146,7 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
             const doc = await fetchDocument(subUrl, { timeoutMs: 8000, headers, cookies, proxy });
             const pageUrl = doc.url ?? subUrl;
             const observedAt = new Date().toISOString();
-            return { subUrl, pageUrl, observedAt, found: parseContactsFromHtml(doc.text, parsedRoot, { pageUrl, defaultRegion }) };
+            return { subUrl, pageUrl, observedAt, found: parseContactsFromHtml(doc.text, parsedRoot, { pageUrl: subUrl, defaultRegion }) };
           } catch {
             return null; /* ignore subpage failure */
           }
@@ -181,11 +182,13 @@ class ContactMerger {
     this.scanned = [url];
   }
 
+  /** `pageUrl` is the page the values came from (after redirects); phones are re-stamped with it. */
   add(page: PageContacts, pageUrl: string, observedAt: string): void {
     for (const e of page.emails) {
       if (!this.emails.has(e)) this.emails.set(e, { source_url: pageUrl, observed_at: observedAt });
     }
-    for (const p of page.phones) {
+    for (const found of page.phones) {
+      const p = { ...found, url: pageUrl };
       const existing = this.phones.get(p.e164);
       // A tel: link is stronger evidence than a number read from text.
       if (!existing || (existing.origin === "text" && p.origin === "tel")) {

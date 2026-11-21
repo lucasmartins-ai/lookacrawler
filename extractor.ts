@@ -65,7 +65,8 @@ const fastInFlight = new Map<string, Promise<string>>();
 const deepInFlight = new Map<string, Promise<string>>();
 
 function requestKey(options: FastExtractOptions | DeepExtractOptions): string {
-  return JSON.stringify(options);
+  // JSON drops functions: a robots-guarded request must not share an unguarded one's result.
+  return JSON.stringify({ ...options, allowRedirect: "allowRedirect" in options && options.allowRedirect ? "guarded" : undefined });
 }
 
 /**
@@ -697,7 +698,9 @@ async function extractFastOnce(options: FastExtractOptions): Promise<string> {
     // (and similar) stop it. A real browser (or a robust proxy) is more likely
     // to pass — without this, the default `fast` path silently returns 0 bytes.
     const message = error instanceof Error ? error.message : String(error);
-    const antiBot = /Anti-Bot protection/i.test(message) || /cloudflare/i.test(message) || /just a moment/i.test(message);
+    // A robots.txt veto names the redirect URL, which may contain "cloudflare": never escalate it.
+    const robotsVeto = message.includes("disallowed by robots.txt");
+    const antiBot = !robotsVeto && (/Anti-Bot protection/i.test(message) || /cloudflare/i.test(message) || /just a moment/i.test(message));
     if (antiBot && !autoStealthEnabled()) {
       recordMetric("failures");
       recordMetric("durationMs", Date.now() - startedAt);

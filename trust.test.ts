@@ -27,6 +27,10 @@ let robotsStatus = 200;
 const hits: Record<string, number> = {};
 let server: ReturnType<typeof Bun.serve>;
 let base: string;
+// A second origin, for cross-origin redirects.
+let otherServer: ReturnType<typeof Bun.serve>;
+let other: string;
+const otherAuth: Array<[string, string | null]> = [];
 
 beforeAll(() => {
   process.env.LOOKACRAWLER_ALLOW_LOCAL = "true";
@@ -48,15 +52,27 @@ beforeAll(() => {
       if (path === "/moved") return new Response(null, { status: 301, headers: { Location: "/landing" } });
       if (path === "/landing") return html(`<html><body><a href="mailto:landing@trust.example">x</a></body></html>`);
       if (path === "/sitemap.xml") return new Response(`<urlset><url><loc>${base}/public</loc></url></urlset>`, { headers: { "Content-Type": "application/xml" } });
+      if (path === "/go-cf") return new Response(null, { status: 302, headers: { Location: "/private/cloudflare-area" } });
+      if (path === "/xorigin") return new Response(null, { status: 302, headers: { Location: `${other}/` } });
       if (path === "/blocked") return html("<html><title>Just a moment...</title><body>Checking your browser</body></html>", 403);
       return new Response("Not Found", { status: 404 });
     },
   });
   base = `http://localhost:${server.port}`;
+  otherServer = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      otherAuth.push([path, req.headers.get("authorization")]);
+      return new Response(path === "/" ? HOME : CONTATO, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    },
+  });
+  other = `http://127.0.0.1:${otherServer.port}`;
 });
 
 afterAll(() => {
   server.stop(true);
+  otherServer.stop(true);
   delete process.env.LOOKACRAWLER_ALLOW_LOCAL;
 });
 
@@ -64,6 +80,7 @@ afterEach(() => {
   robotsTxt = null;
   robotsStatus = 200;
   for (const k of Object.keys(hits)) delete hits[k];
+  otherAuth.length = 0;
 });
 
 const isIso = (s: string) => !Number.isNaN(Date.parse(s)) && new Date(s).toISOString() === s;
@@ -322,5 +339,48 @@ describe("fast -> stealth escalation is opt-in", () => {
       expect(body.status).toBe("anti_bot");
       expect(body.reason).toContain("not retried in the stealth browser");
     }
+  });
+});
+
+describe("delta review fixes", () => {
+  const saved = process.env.LOOKACRAWLER_AUTO_STEALTH;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.LOOKACRAWLER_AUTO_STEALTH;
+    else process.env.LOOKACRAWLER_AUTO_STEALTH = saved;
+  });
+
+  test("a cross-origin root redirect does not send the caller's headers to the new origin's links", async () => {
+    const r = await extractContacts({ url: `${base}/xorigin`, headers: { Authorization: "Bearer secret" } });
+    // Root values are named by the page they came from...
+    expect(r.evidence.find((e) => e.value === "home@trust.example")?.source_url).toBe(`${other}/`);
+    // ...but /contato resolves against the requested origin, so only the redirect itself reaches the other host.
+    expect(otherAuth.map(([path]) => path)).toEqual(["/"]);
+    expect(hits["/contato"]).toBe(1);
+  });
+
+  test("a robots veto naming a 'cloudflare' URL is not escalated to the browser", async () => {
+    process.env.LOOKACRAWLER_AUTO_STEALTH = "1";
+    const robots = robotsFromText(base, "User-agent: *\nDisallow: /private\n");
+    await expect(extractFast({ url: `${base}/go-cf`, maxRetries: 1, allowRedirect: robots.isAllowed })).rejects.toThrow(
+      /^Redirect to .*cloudflare-area is disallowed by robots\.txt/
+    );
+    expect(hits["/private/cloudflare-area"]).toBeUndefined();
+  });
+
+  test("a guarded request does not share an unguarded in-flight result", async () => {
+    const robots = robotsFromText(base, "User-agent: *\nDisallow: /private\n");
+    const [guarded, open] = await Promise.allSettled([
+      extractFast({ url: `${base}/go-private`, maxRetries: 1, allowRedirect: robots.isAllowed }),
+      extractFast({ url: `${base}/go-private`, maxRetries: 1 }),
+    ]);
+    expect(guarded.status).toBe("rejected");
+    expect(open.status).toBe("fulfilled");
+  });
+
+  test("map reports a home redirect into a disallowed path as skipped", async () => {
+    robotsTxt = "User-agent: *\nDisallow: /private\n";
+    const r = await mapWebsite({ url: `${base}/go-private` });
+    expect(r.skippedByRobots).toContain(`${base}/private/area`);
+    expect(hits["/private/area"]).toBeUndefined();
   });
 });
