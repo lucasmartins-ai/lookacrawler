@@ -6,6 +6,8 @@ import type { GoogleMapsLead } from "./maps-bridge.js";
 import { countryToRegion, findPhones, normalizePhone } from "./quality/phone.js";
 import { cleanEmails, findEmails } from "./quality/email.js";
 import { formatCnpj } from "./quality/cnpj.js";
+import { jevAsk, type JevAsk } from "./jev.js";
+import { classifyFailure, type FailureStatus } from "./errors.js";
 
 export interface EnrichedLeadResult {
   title: string;
@@ -36,6 +38,10 @@ export interface EnrichedLeadResult {
   sourcePagesCrawled: string[];
   enrichmentSuccess: boolean;
   error?: string;
+  /** Why enrichment failed, when it did (see errors.ts). */
+  status?: FailureStatus;
+  /** Non-fatal problems: the result is usable but partial. */
+  warnings?: string[];
 
   // Normalized details
   /** DV-valid CNPJs printed on the company site, unmasked. */
@@ -80,9 +86,59 @@ function hostOf(url?: string): string | undefined {
  * The home page is fetched once: the same raw HTML feeds contact extraction
  * (which needs <nav>/<footer>) and, on a cache miss, the markdown summary.
  */
+// Unicode letters so "Dr. João Antônio" matches; "de/da/dos" particles allowed inside a name.
+const PERSON_RE =
+  /(?:Dra?\.|Diretora?|Fundadora?|Sócia|Sócio|CEO|Proprietária|Proprietário|Cirurgiã|Cirurgião|Owner|Founder|Director)[:\s]+(\p{Lu}\p{Ll}+(?:\s+(?:d[aeo]s?\s+)?\p{Lu}\p{Ll}+){1,3})/gu;
+
+export function findPersonCandidates(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(PERSON_RE)) {
+    const name = m[1].trim();
+    if (!out.includes(name)) out.push(name);
+  }
+  return out.slice(0, 8);
+}
+
+/**
+ * Without Jev every candidate is kept (old behaviour). With Jev the picked
+ * name goes first; "none" clears the list so outreach never greets a phrase
+ * like "Consultas Online". Jev can only choose among spans found in the page.
+ */
+export async function pickDecisionMaker(
+  candidates: string[],
+  text: string,
+  lead: { title: string; category?: string },
+  ask: JevAsk = jevAsk
+): Promise<string[]> {
+  if (candidates.length === 0) return [];
+  const evidence = candidates.map((c) => {
+    const i = text.indexOf(c);
+    return text.slice(Math.max(0, i - 80), i + c.length + 80).replace(/\s+/g, " ");
+  });
+  const criteria: Record<string, string | null> = Object.fromEntries(candidates.map((c) => [c, null]));
+  criteria.none = "No candidate is a real person who leads or represents this business";
+  const answers = await ask(
+    "lookacrawler_decision_maker",
+    { business: { name: lead.title, category: lead.category ?? "unknown" }, candidates, evidence },
+    {
+      decision_maker: {
+        type: "choice",
+        instructions:
+          "Which candidate is a real person who owns, founded, directs or is the lead professional of `business`? `evidence[i]` is the page text around `candidates[i]`.",
+        criteria,
+      },
+    }
+  );
+  const pick = answers?.decision_maker?.choice;
+  if (!pick) return candidates;
+  if (pick === "none") return [];
+  return candidates.includes(pick) ? [pick, ...candidates.filter((c) => c !== pick)] : candidates;
+}
+
 export async function deepEnrichLead(
   lead: Partial<GoogleMapsLead> & { title: string; web_site?: string },
-  options: EnrichOptions = {}
+  options: EnrichOptions = {},
+  ask: JevAsk = jevAsk
 ): Promise<EnrichedLeadResult> {
   const mode = options.mode || "fast";
   const linkFormat = options.linkFormat || "references";
@@ -135,13 +191,17 @@ export async function deepEnrichLead(
 
   if (!lead.web_site || !lead.web_site.startsWith("http")) {
     result.error = "Lead has no valid website to enrich.";
+    result.status = "invalid_input";
     return result;
   }
 
   try {
     await validateTargetUrl(lead.web_site);
   } catch (secErr: any) {
-    result.error = `Website blocked by security policy: ${secErr?.message}`;
+    // validateTargetUrl also resolves DNS: a dead domain is not a policy block.
+    result.status = classifyFailure(secErr);
+    const policy = result.status === "blocked_private" || result.status === "invalid_input";
+    result.error = `${policy ? "Website blocked by security policy" : "Website unreachable"}: ${secErr?.message}`;
     return result;
   }
 
@@ -170,8 +230,14 @@ export async function deepEnrichLead(
     }
 
     if (!homeMarkdown && rawHtml !== undefined) {
-      homeMarkdown = processHtmlToMarkdown(rawHtml, { url: lead.web_site, linkFormat, imageMode });
-      setCachedPage(cacheKey, homeMarkdown);
+      // Contacts come from the raw html below; a page the markdown pipeline
+      // cannot convert must not cost us its emails and phones.
+      try {
+        homeMarkdown = processHtmlToMarkdown(rawHtml, { url: lead.web_site, linkFormat, imageMode });
+        setCachedPage(cacheKey, homeMarkdown);
+      } catch (convErr: any) {
+        result.warnings = [`HTML could not be converted to markdown: ${convErr?.message}`];
+      }
     }
     homeMarkdown = homeMarkdown || "";
 
@@ -256,14 +322,9 @@ export async function deepEnrichLead(
       }
     }
 
-    // 7. Extract possible decision makers / doctors / owners
-    const personRegex = /(?:Dr\.|Dra\.|Diretor|Fundador|Sócio|CEO|Proprietário|Cirurgião|Owner|Founder|Director)[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/g;
-    let match;
-    while ((match = personRegex.exec(homeMarkdown)) !== null) {
-      if (match[1] && !result.decisionMakers.includes(match[1])) {
-        result.decisionMakers.push(match[1].trim());
-      }
-    }
+    // 7. Decision makers: a recall-tuned regex finds candidates, Jev (when
+    //    configured) picks the one who runs the business or drops them all.
+    result.decisionMakers = await pickDecisionMaker(findPersonCandidates(homeMarkdown), homeMarkdown, result, ask);
 
     // 8. Build ultra-compact LLM summary (< 300 tokens)
     const summaryLines: string[] = [
@@ -289,6 +350,7 @@ export async function deepEnrichLead(
     result.enrichmentSuccess = true;
   } catch (err: any) {
     result.error = `Failed to enrich lead via LookaCrawler: ${err?.message}`;
+    result.status = classifyFailure(err);
   }
 
   return result;
