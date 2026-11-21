@@ -40,7 +40,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scored 0.03-0.17. Cut moved from 0.2 to 0.3 after one scoring run over 179 real Maps leads.
 - Decision-maker names with accents ("Dra. Marta Lúcia", "Dr. João") were never
   matched by the person regex.
-
+- Failures report why and exit non-zero. `enrich` exited 0 with
+  `enrichmentSuccess: false`; it now exits 1 and adds `status`
+  (`dead_domain`, `connection_failed`, `blocked_private`, `timeout`,
+  `anti_bot`, `http_error`, `invalid_input`, `error`). `extract --json` prints
+  `{ ok: false, status, reason, url, mode }` on stdout instead of a stderr line.
+- A domain with no DNS record was reported as "blocked by security policy", and
+  a site that reset the connection as "private or local hosts are not allowed".
+  Both now carry their real reason (`dead_domain`, `connection_failed`).
+- A `<table>` with no rows crashed the markdown conversion ("tr.parentNode",
+  turndown-plugin-gfm) and lost the whole page; in `enrich` a conversion error
+  no longer costs the emails and phones found in the raw HTML.
+- `text/markdown` and `text/plain` responses pass through as-is (the HTML
+  pipeline flattened their code blocks). PDFs are converted to text with
+  `unpdf` (pinned 2.1.0), detected by Content-Type or `%PDF-` magic bytes,
+  first 50 pages.
+- A site could send `x-lookacrawler-blocked` itself and have its own answer
+  read as an egress-guard refusal. The guard now marks its answers with a
+  random per-process token. A redirect to a host that does not resolve is
+  `connection_failed`, so the lead's own domain is not marked dead.
 - `extract` failed intermittently with "Extraction error: disk I/O error"
   (`SQLITE_IOERR_VNODE`). On macOS something hard-links the `-wal`/`-shm` files
   of a cache DB kept under `~/Downloads/lookacrawler` while a connection is open,

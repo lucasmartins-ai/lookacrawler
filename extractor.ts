@@ -13,7 +13,8 @@ import {
 } from "./resilience.js";
 import { getBrowser, getStealthInit } from "./browser-manager.js";
 import { getMaxResponseBytes, isLocalAccessAllowed, validateProxyUrl, validateTargetUrl } from "./security.js";
-import { BLOCKED_HEADER, getEgressGuard } from "./egress-guard.js";
+import { BLOCKED_HEADER, BLOCKED_TOKEN, getEgressGuard } from "./egress-guard.js";
+import { classifyFailure } from "./errors.js";
 import { buildCacheKey, getCachedPage, setCachedPage } from "./cache.js";
 import { recordMetric } from "./metrics.js";
 
@@ -121,9 +122,9 @@ export function decodeHtml(body: Uint8Array, contentType: string | null): string
   return decode(head.match(/<meta[^>]+charset\s*=\s*["']?\s*([a-z0-9_:.-]+)/i)?.[1] || "utf-8");
 }
 
-/** Read a response body as text, aborting as soon as it grows past `maxBytes`. */
-async function readBodyWithLimit(response: Response, maxBytes: number): Promise<string> {
-  if (!response.body) return "";
+/** Read a response body, aborting as soon as it grows past `maxBytes`. */
+async function readBodyWithLimit(response: Response, maxBytes: number): Promise<Buffer> {
+  if (!response.body) return Buffer.alloc(0);
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -137,7 +138,84 @@ async function readBodyWithLimit(response: Response, maxBytes: number): Promise<
     }
     chunks.push(value);
   }
-  return decodeHtml(Buffer.concat(chunks), response.headers.get("content-type"));
+  return Buffer.concat(chunks);
+}
+
+/** A fetched document: decoded text, plus the raw bytes and type for non-HTML bodies. */
+export interface FetchedDocument {
+  text: string;
+  bytes: Buffer;
+  contentType: string;
+}
+
+const PLAIN_TEXT_TYPES = new Set(["text/plain", "text/markdown", "text/x-markdown"]);
+
+function mimeOf(contentType: string): string {
+  return contentType.split(";")[0].trim().toLowerCase();
+}
+
+/** One rule for "is this a PDF", shared by fetch and conversion: MIME type or magic bytes. */
+function isPdfDocument(contentType: string, bytes: Buffer): boolean {
+  return mimeOf(contentType) === "application/pdf" || bytes.subarray(0, 5).toString("latin1") === "%PDF-";
+}
+
+// ponytail: fixed page cap; make it an option if someone needs whole books.
+const MAX_PDF_PAGES = 50;
+
+async function pdfToText(bytes: Buffer): Promise<string> {
+  const { getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  try {
+    const pages: string[] = [];
+    for (let i = 1; i <= Math.min(pdf.numPages, MAX_PDF_PAGES); i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const text = content.items.map((item) => ("str" in item ? item.str + (item.hasEOL ? "\n" : "") : "")).join("").trim();
+      page.cleanup();
+      if (text) pages.push(text);
+    }
+    if (pdf.numPages > MAX_PDF_PAGES) pages.push(`[truncated: first ${MAX_PDF_PAGES} of ${pdf.numPages} pages]`);
+    return pages.join("\n\n---\n\n");
+  } finally {
+    await pdf.loadingTask.destroy();
+  }
+}
+
+/**
+ * Convert a fetched document to markdown by its type: markdown and plain text
+ * pass through (the HTML pipeline flattened their code blocks), PDFs go
+ * through unpdf, everything else is treated as HTML.
+ */
+export async function documentToMarkdown(
+  doc: FetchedDocument,
+  options: { url: string; cssSelector?: string; linkFormat?: LinkFormat; imageMode?: ImageMode }
+): Promise<string> {
+  // PDF first: a PDF served as text/plain must not pass through as an empty "success".
+  if (isPdfDocument(doc.contentType, doc.bytes)) return pdfToText(doc.bytes);
+  if (PLAIN_TEXT_TYPES.has(mimeOf(doc.contentType))) return doc.text.replace(/\r\n/g, "\n").trim();
+  return processHtmlToMarkdown(doc.text, options);
+}
+
+/**
+ * Turn an egress-guard refusal into the real reason. The guard marks every
+ * answer it writes itself with BLOCKED_HEADER: 403 carries the resolver error
+ * (private address or a dead domain), 502 means the site refused or reset the
+ * connection. Reporting all of them as "private host" hid dead domains and
+ * sites that drop non-browser clients.
+ */
+export async function guardRefusal(response: Response, url: string): Promise<Error> {
+  const host = new URL(url).hostname;
+  let detail = "";
+  try {
+    // Capped: an upstream site could forge the header, so this text is untrusted.
+    detail = String((JSON.parse(await response.text()) as { error?: unknown }).error || "").slice(0, 200);
+  } catch {
+    /* no JSON body */
+  }
+  if (response.status === 502) return new Error(`Connection to ${host} failed${detail ? `: ${detail}` : " (refused or reset by the site)"}`);
+  if (response.status === 413) return new Error("Request body exceeds the egress guard limit");
+  if (response.status === 403 && detail) return new Error(detail);
+  return new Error("Requests to private or local hosts are not allowed");
 }
 
 /** Validate a caller-supplied proxy, or fall back to the operator's proxy pool. */
@@ -146,18 +224,22 @@ async function selectProxy(proxy?: string): Promise<string | undefined> {
   return proxyPool.getProxy();
 }
 
+type FetchOptions = {
+  timeoutMs?: number;
+  headers?: Record<string, string>;
+  cookies?: Record<string, string>;
+  proxy?: string;
+};
+
 /**
  * Fetch raw HTML content from a URL using native HTTP fetch with resilience, proxying, & headers/cookies.
  */
-export async function fetchHtml(
-  url: string,
-  options: {
-    timeoutMs?: number;
-    headers?: Record<string, string>;
-    cookies?: Record<string, string>;
-    proxy?: string;
-  } = {}
-): Promise<string> {
+export async function fetchHtml(url: string, options: FetchOptions = {}): Promise<string> {
+  return (await fetchDocument(url, options)).text;
+}
+
+/** Same as fetchHtml, keeping the body bytes and Content-Type for non-HTML routing. */
+export async function fetchDocument(url: string, options: FetchOptions = {}): Promise<FetchedDocument> {
   const { timeoutMs = 10000, headers = {}, cookies, proxy } = options;
   await validateTargetUrl(url);
   const controller = new AbortController();
@@ -209,15 +291,25 @@ export async function fetchHtml(
     let response: Response | undefined;
     for (let redirect = 0; redirect <= 5; redirect++) {
       response = await fetch(currentUrl, { ...fetchOpts, redirect: "manual" });
-      if (response.headers.get(BLOCKED_HEADER)) {
-        throw new Error("Requests to private or local hosts are not allowed");
+      // Only the guard knows the token; a site echoing the header name is ignored.
+      if (response.headers.get(BLOCKED_HEADER) === BLOCKED_TOKEN) {
+        const refusal = await guardRefusal(response, currentUrl);
+        // A redirect hop that stops resolving (DNS changed since the check) is the hop's problem, not the lead's.
+        if (redirect > 0 && classifyFailure(refusal) === "dead_domain") {
+          throw new Error(`Connection to ${new URL(currentUrl).hostname} failed: redirect target does not resolve`);
+        }
+        throw refusal;
       }
       if (response.status < 300 || response.status >= 400) break;
       const location = response.headers.get("location");
       if (!location || redirect === 5) throw new Error(`HTTP ${response.status}: redirect limit exceeded`);
       await response.body?.cancel().catch(() => {});
       const nextUrl = new URL(location, currentUrl).toString();
-      await validateTargetUrl(nextUrl);
+      await validateTargetUrl(nextUrl).catch((err) => {
+        // The lead's own domain answered; a redirect to a dead host is not a dead lead.
+        if (classifyFailure(err) !== "dead_domain") throw err;
+        throw new Error(`Connection to ${new URL(nextUrl).hostname} failed: redirect target does not resolve`);
+      });
       if (new URL(nextUrl).origin !== new URL(currentUrl).origin) {
         // Same rule browsers apply: credentials the caller scoped to one site
         // must not be replayed to whatever host a redirect points at.
@@ -234,8 +326,12 @@ export async function fetchHtml(
     }
     // Content-Length is optional (chunked responses) and can lie, so enforce
     // the cap while streaming instead of buffering the whole body first.
-    const htmlText = await readBodyWithLimit(response, getMaxResponseBytes());
-    recordMetric("bytesFetched", Buffer.byteLength(htmlText, "utf8"));
+    const bytes = await readBodyWithLimit(response, getMaxResponseBytes());
+    recordMetric("bytesFetched", bytes.byteLength);
+    const contentType = response.headers.get("content-type") || "";
+    const isPdf = isPdfDocument(contentType, bytes);
+    // ponytail: PDFs skip charset decoding and the anti-bot text scan; their bytes are not markup.
+    const htmlText = isPdf ? "" : decodeHtml(bytes, contentType);
 
     const antiBotCheck: AntiBotCheckResult = detectAntiBot(response.status, htmlText);
     if (antiBotCheck.isBlocked) {
@@ -246,7 +342,7 @@ export async function fetchHtml(
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    return htmlText;
+    return { text: htmlText, bytes, contentType };
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw new Error(`Request timed out after ${timeoutMs}ms`);
@@ -276,6 +372,13 @@ function createTurndownService(opts: TurndownPipelineOptions = {}): TurndownServ
 
   // Enable GitHub-Flavored Markdown tables
   turndownService.use(gfm);
+  // turndown-plugin-gfm reads table.rows[0] unguarded, so a <table> left with
+  // no rows (empty in the source, or emptied by pruning) threw "tr.parentNode"
+  // and lost the whole page. Added after gfm, so this rule is checked first.
+  turndownService.addRule("table-without-rows", {
+    filter: (node) => node.nodeName === "TABLE" && !(node as HTMLTableElement).rows?.length,
+    replacement: (content) => (content.trim() ? `\n\n${content}\n\n` : ""),
+  });
 
   // Configure image handling
   if (imageMode === "ignore") {
@@ -515,8 +618,8 @@ async function extractFastOnce(options: FastExtractOptions): Promise<string> {
   try {
     const result = await retryWithBackoff(
     async () => {
-      const rawHtml = await fetchHtml(url, { timeoutMs, headers, cookies, proxy });
-      return processHtmlToMarkdown(rawHtml, { url, cssSelector, linkFormat, imageMode });
+      const doc = await fetchDocument(url, { timeoutMs, headers, cookies, proxy });
+      return documentToMarkdown(doc, { url, cssSelector, linkFormat, imageMode });
     },
     { maxRetries }
   );
@@ -628,7 +731,7 @@ async function installRequestGuard(
  * refuse content whose redirect chain or final URL is a forbidden host.
  */
 async function assertSafeNavigation(page: Page, response: PlaywrightResponse | null): Promise<void> {
-  if (response && (await response.headerValue(BLOCKED_HEADER).catch(() => null))) {
+  if (response && (await response.headerValue(BLOCKED_HEADER).catch(() => null)) === BLOCKED_TOKEN) {
     throw new Error("Requests to private or local hosts are not allowed");
   }
   for (let r = response?.request() ?? null; r; r = r.redirectedFrom()) {
