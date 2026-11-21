@@ -60,20 +60,39 @@ async function spawnOnce(args: string[], opts: Opts): Promise<CliResult | "misse
   const out = { text: "", closed: false };
   const err = { text: "", closed: false };
   let exited = false;
-  const exit = proc.exited.then(() => (exited = true));
+  let code: number | null = null;
+  const exit = proc.exited.then((c) => {
+    exited = true;
+    code = c;
+  });
+  exit.catch(() => {});
+  let settled = false;
   const timers: ReturnType<typeof setTimeout>[] = [];
-  const after = <T>(ms: number, value: T) => new Promise<T>((resolve) => timers.push(setTimeout(resolve, ms, value)));
+  const after = <T>(ms: number, value: T) =>
+    new Promise<T>((resolve) => {
+      if (!settled) timers.push(setTimeout(resolve, ms, value));
+    });
 
   const pipesThenExit = Promise.all([drain(proc.stdout, out), drain(proc.stderr, err)]).then(() =>
     Promise.race([exit.then(() => "ok" as const), after(EXIT_GRACE_MS, "missed_exit" as const)])
   );
-  const outcome = await Promise.race([pipesThenExit, after(opts.deadlineMs ?? DEADLINE_MS, "deadline" as const)]);
-  timers.forEach(clearTimeout);
+  let outcome: "ok" | "missed_exit" | "deadline";
+  try {
+    outcome = await Promise.race([pipesThenExit, after(opts.deadlineMs ?? DEADLINE_MS, "deadline" as const)]);
+  } catch (e) {
+    proc.kill("SIGKILL");
+    throw e;
+  } finally {
+    settled = true;
+    timers.forEach(clearTimeout);
+  }
 
-  if (outcome === "ok") return { code: proc.exitCode ?? -1, stdout: out.text, stderr: err.text };
+  if (outcome === "ok") return { code: code ?? proc.exitCode ?? -1, stdout: out.text, stderr: err.text };
   const state = processState(proc.pid);
+  // Retry only a child that really ended (zombie, or already reaped); one still alive is a real hang.
+  const ended = /^state=(Z|gone)/.test(state);
   proc.kill("SIGKILL");
-  if (outcome === "missed_exit") {
+  if (outcome === "missed_exit" && ended) {
     console.warn(`test-spawn: exit not observed for bun cli.ts ${args.join(" ")} (pid=${proc.pid} ${state}); re-running`);
     return "missed_exit";
   }
