@@ -120,7 +120,7 @@ describe("Maps CLI completion", () => {
   const fakeBinary = (dir: string, lines: object[]) => {
     const path = `${dir}/fake-maps-leads`;
     const out = lines.map((l) => JSON.stringify(l)).join("\n");
-    Bun.write(path, `#!/bin/sh\nprintf '%s\\n' '${out.replace(/'/g, "'\\''")}'\nsleep 600 &\necho $! > "${dir}/grandchild.pid"\nwait\n`);
+    require("node:fs").writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' '${out.replace(/'/g, "'\\''")}'\nsleep 600 &\necho $! > "${dir}/grandchild.pid"\nwait\n`);
     require("node:fs").chmodSync(path, 0o755);
     return path;
   };
@@ -146,11 +146,31 @@ describe("Maps CLI completion", () => {
     expect(() => process.kill(pid, 0)).toThrow(); // the "browser" is gone too
   });
 
+  test("a scraper that exits without reading stdin does not crash the caller (EPIPE)", async () => {
+    const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
+    const path = `${dir}/no-stdin`;
+    // Closes stdin at once; the 1 MB query overflows the pipe buffer, so the write always fails.
+    require("node:fs").writeFileSync(path, `#!/bin/sh\nexec 0<&-\nprintf '{"title":"Loja","cid":"1"}\\n'\n`);
+    require("node:fs").chmodSync(path, 0o755);
+    const res = await discoverLocalLeads("x".repeat(1_000_000), { customBinaryPath: path, preferDaemon: false, limit: 20, idleMs: 300 });
+    expect(res.data.map((l) => l.title)).toEqual(["Loja"]);
+  });
+
+  test("a query that never reached the scraper is a failure, not an empty result", async () => {
+    const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
+    const path = `${dir}/no-stdin-no-output`;
+    require("node:fs").writeFileSync(path, `#!/bin/sh\nexec 0<&-\nexit 0\n`);
+    require("node:fs").chmodSync(path, 0o755);
+    const res = await discoverLocalLeads("x".repeat(1_000_000), { customBinaryPath: path, preferDaemon: false, limit: 20, idleMs: 300 });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("query not delivered");
+  });
+
   test("scrolls one page by default: -depth 2+ kills the scraper's browser", async () => {
     const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
     const path = `${dir}/echo-args`;
     // Prints its own argv as the lead title, then exits.
-    Bun.write(path, `#!/bin/sh\nprintf '{"title":"%s","cid":"1"}\\n' "$*"\n`);
+    require("node:fs").writeFileSync(path, `#!/bin/sh\nprintf '{"title":"%s","cid":"1"}\\n' "$*"\n`);
     require("node:fs").chmodSync(path, 0o755);
     const res = await discoverLocalLeads("lojas", { customBinaryPath: path, preferDaemon: false, limit: 20, idleMs: 300 });
     expect(res.data[0].title).toContain("-depth 1 ");
@@ -160,7 +180,7 @@ describe("Maps CLI completion", () => {
     const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
     const path = `${dir}/reviews`;
     // Echoes argv into the title so the flag is observable, plus the review fields.
-    Bun.write(path, `#!/bin/sh\nprintf '{"title":"%s","cid":"1","user_reviews":[{"Rating":1,"Description":"No reply"}],"order_online":[{"link":"https://booksy.com/x"}]}\\n' "$*"\n`);
+    require("node:fs").writeFileSync(path, `#!/bin/sh\nprintf '{"title":"%s","cid":"1","user_reviews":[{"Rating":1,"Description":"No reply"}],"order_online":[{"link":"https://booksy.com/x"}]}\\n' "$*"\n`);
     require("node:fs").chmodSync(path, 0o755);
     const res = await discoverLocalLeads("vets", { customBinaryPath: path, preferDaemon: false, idleMs: 300, extraReviews: true });
     expect(res.data[0].title).toContain("-extra-reviews");
@@ -173,7 +193,7 @@ describe("Maps CLI completion", () => {
   test("an empty run that logged scraper errors is a failure, not an empty success", async () => {
     const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
     const path = `${dir}/crashing`;
-    Bun.write(path, `#!/bin/sh\necho '{"level":"error","error":"playwright: target closed","message":"error while processing job"}' >&2\nexit 0\n`);
+    require("node:fs").writeFileSync(path, `#!/bin/sh\necho '{"level":"error","error":"playwright: target closed","message":"error while processing job"}' >&2\nexit 0\n`);
     require("node:fs").chmodSync(path, 0o755);
     const res = await discoverLocalLeads("lojas", { customBinaryPath: path, preferDaemon: false });
     expect(res.success).toBe(false);
@@ -183,7 +203,7 @@ describe("Maps CLI completion", () => {
   test("a search with no results is an empty success, not a failure", async () => {
     const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
     const path = `${dir}/nothing-found`;
-    Bun.write(path, `#!/bin/sh\necho '{"level":"error","error":"inactivity timeout: 0001-01-01T00:00:00Z","message":"scrapemate exited"}' >&2\nexit 0\n`);
+    require("node:fs").writeFileSync(path, `#!/bin/sh\necho '{"level":"error","error":"inactivity timeout: 0001-01-01T00:00:00Z","message":"scrapemate exited"}' >&2\nexit 0\n`);
     require("node:fs").chmodSync(path, 0o755);
     const res = await discoverLocalLeads("lojas", { customBinaryPath: path, preferDaemon: false });
     expect(res.success).toBe(true);

@@ -9,11 +9,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # TEMPORARY (remove before merge): 10 samples of the flaky spawn fix in one push.
-    strategy:
-      fail-fast: false
-      matrix:
-        leg: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
     - uses: actions/checkout@v4
     - uses: oven-sh/setup-bun@v2
