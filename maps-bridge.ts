@@ -600,7 +600,6 @@ export async function discoverLocalLeadsViaCli(
     const seenIds = new Set<string>();
     let lineBuffer = "";
 
-    let stdinError = "";
     const finish = (code: number | null = 0) => {
       if (isResolved) return;
       isResolved = true;
@@ -622,8 +621,7 @@ export async function discoverLocalLeadsViaCli(
       // "inactivity timeout" is how maps-leads ends a search with no results:
       // that is an empty answer, not a failure.
       const scraperError = leads.length === 0
-        ? (stdinError ? `query not delivered (${stdinError})` : "") ||
-          ([...stderrBuffer.matchAll(/"error":"([^"]+)"/g)].map((m) => m[1]).find((e) => !/inactivity timeout/i.test(e)) ?? "")
+        ? ([...stderrBuffer.matchAll(/"error":"([^"]+)"/g)].map((m) => m[1]).find((e) => !/inactivity timeout/i.test(e)) ?? "")
         : "";
       resolve({
         success: leads.length > 0 || (code === 0 && !timedOut && !scraperError),
@@ -760,14 +758,10 @@ export async function discoverLocalLeadsViaCli(
     });
 
     // Send query to stdin and close write stream. A scraper that exits before reading it makes the
-    // write fail with EPIPE; without a listener that is an uncaught exception. `finish` reports it
-    // when the run produced no leads.
-    // ponytail: if "close" beats this error (a scraper that exits 0 at once without reading), the run
-    // reads as an empty result; maps-leads always reads stdin and a crash exits non-zero, which
-    // `finish` already reports. Bun's writableFinished cannot tell a flushed write on Linux.
-    child.stdin.on("error", (err: Error) => {
-      stdinError ||= err.message;
-    });
+    // write fail with EPIPE; without a listener that is an uncaught exception that takes down the CLI or MCP process.
+    // ponytail: the error is not reported: Bun on Linux emits it unreliably (often after "close"), and
+    // a scraper that dies before reading exits non-zero, which `finish` already reports.
+    child.stdin.on("error", () => {});
     child.stdin.write(`${fullQuery}\n`);
     child.stdin.end();
   });

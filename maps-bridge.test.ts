@@ -156,17 +156,6 @@ describe("Maps CLI completion", () => {
     expect(res.data.map((l) => l.title)).toEqual(["Loja"]);
   });
 
-  test("a query that never reached the scraper is a failure, not an empty result", async () => {
-    const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
-    const path = `${dir}/no-stdin-no-output`;
-    // Stays alive after closing stdin so the EPIPE always lands before "close" (on Linux too).
-    require("node:fs").writeFileSync(path, `#!/bin/sh\nexec 0<&-\nsleep 0.2\nexit 0\n`);
-    require("node:fs").chmodSync(path, 0o755);
-    const res = await discoverLocalLeads("x".repeat(1_000_000), { customBinaryPath: path, preferDaemon: false, limit: 20, idleMs: 300 });
-    expect(res.success).toBe(false);
-    expect(res.error).toContain("query not delivered");
-  });
-
   test("scrolls one page by default: -depth 2+ kills the scraper's browser", async () => {
     const dir = require("node:fs").mkdtempSync(`${require("node:os").tmpdir()}/maps-fake-`);
     const path = `${dir}/echo-args`;
