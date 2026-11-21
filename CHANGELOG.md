@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Disk: the page cache now drops expired pages whenever any process opens it
+  (CLI, MCP server, v2 API, library). Before, only the MCP server pruned, so a
+  CLI-only install kept every page it ever read past the 24 h TTL. A locked
+  database skips the prune and keeps the cache usable.
+- Disk: purging or deleting a Maps campaign also removes the `.raw.tmp` and
+  `.tmp.csv` a crashed worker leaves behind; before, they stayed forever.
+
 - Retries: a `429` or `503` inside a URL no longer makes an error retryable.
   A robots.txt veto on a URL with port 44290 was fetched 4 times instead of
   once; only `HTTP 429`, `HTTP Status 503` or a message that starts with the
