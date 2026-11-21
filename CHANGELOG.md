@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matches the page on two group posts with comments; 30 of 30 on a page post with
   hundreds; 20 recent posts of group 542220895801669 really show "Ainda não há nenhum
   comentário", so `comments: []` there is correct.
+- Optional TypeSafe System One (Jev) judgments, on only when `TYPESAFE_API_KEY`
+  (or the macOS Keychain item `typesafe`) is set; `LOOKACRAWLER_JEV=off` disables
+  them. `gtm` asks one batched question per run and skips Maps results outside
+  the niche (shops of related goods, schools, associations, public places)
+  before crawling them; skipped leads are listed in `skipped`. Enrichment lets
+  Jev pick the decision maker among names found on the page, or none. Every
+  failure falls back to the deterministic path.
 - `audit <url>` / `audit_company_website`: deterministic SEO checklist, conversion
   channels (WhatsApp, phone, email, booking, form), services and a digital
   maturity score. No paid API.
@@ -56,7 +63,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bridge calls send `Connection: close`. The "socket connection was closed
   unexpectedly" failure was Bun reusing a keep-alive socket the bridge had already
   closed (the call failed in ~3 ms), not a slow page script.
-
+- `gtm` niche gate no longer treats "supplier" as a miss: Google labels solar
+  installers "Fornecedor de equipamentos a energia solar", and 9 real ones
+  scored 0.03-0.17. Cut moved from 0.2 to 0.3 after one scoring run over 179 real Maps leads.
+- Decision-maker names with accents ("Dra. Marta Lúcia", "Dr. João") were never
+  matched by the person regex.
+- Failures report why and exit non-zero. `enrich` exited 0 with
+  `enrichmentSuccess: false`; it now exits 1 and adds `status`
+  (`dead_domain`, `connection_failed`, `blocked_private`, `timeout`,
+  `anti_bot`, `http_error`, `invalid_input`, `error`). `extract --json` prints
+  `{ ok: false, status, reason, url, mode }` on stdout instead of a stderr line.
+- A domain with no DNS record was reported as "blocked by security policy", and
+  a site that reset the connection as "private or local hosts are not allowed".
+  Both now carry their real reason (`dead_domain`, `connection_failed`).
+- A `<table>` with no rows crashed the markdown conversion ("tr.parentNode",
+  turndown-plugin-gfm) and lost the whole page; in `enrich` a conversion error
+  no longer costs the emails and phones found in the raw HTML.
+- `text/markdown` and `text/plain` responses pass through as-is (the HTML
+  pipeline flattened their code blocks). PDFs are converted to text with
+  `unpdf` (pinned 2.1.0), detected by Content-Type or `%PDF-` magic bytes:
+  first 50 pages, 2M characters, 15 s; a PDF that fails to parse is not retried.
+- A site could send `x-lookacrawler-blocked` itself and have its own answer
+  read as an egress-guard refusal. The guard now marks its answers with a
+  random per-process token. A redirect to a host that does not resolve is
+  `connection_failed`, so the lead's own domain is not marked dead.
 - `extract` failed intermittently with "Extraction error: disk I/O error"
   (`SQLITE_IOERR_VNODE`). On macOS something hard-links the `-wal`/`-shm` files
   of a cache DB kept under `~/Downloads/lookacrawler` while a connection is open,

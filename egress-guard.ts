@@ -43,6 +43,12 @@ export interface EgressGuard {
 }
 
 export const BLOCKED_HEADER = "x-lookacrawler-blocked";
+/**
+ * Value the guard puts in BLOCKED_HEADER. Upstream headers pass through the
+ * guard (and through HTTPS tunnels untouched), so a site can send the header
+ * itself; only this per-process secret proves the guard wrote the answer.
+ */
+export const BLOCKED_TOKEN = randomBytes(16).toString("hex");
 
 const USERNAME = "lc";
 const DIRECT = ""; // route key for "no upstream proxy"
@@ -85,7 +91,7 @@ function parseHostPort(authority: string, defaultPort: number): { host: string; 
 function rejectSocket(socket: net.Socket, status: string, reason: string, extra = ""): void {
   const body = JSON.stringify({ error: reason });
   socket.end(
-    `HTTP/1.1 ${status}\r\n${BLOCKED_HEADER}: 1\r\nContent-Type: application/json\r\n` +
+    `HTTP/1.1 ${status}\r\n${BLOCKED_HEADER}: ${BLOCKED_TOKEN}\r\nContent-Type: application/json\r\n` +
       `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n${extra}\r\n${body}`
   );
 }
@@ -283,7 +289,7 @@ async function forwardOverTunnel(
   for await (const chunk of req) {
     size += chunk.length;
     if (size > MAX_FORWARDED_BODY_BYTES) {
-      res.writeHead(413, { [BLOCKED_HEADER]: "1" });
+      res.writeHead(413, { [BLOCKED_HEADER]: BLOCKED_TOKEN });
       res.end();
       return;
     }
@@ -356,7 +362,7 @@ function startServer(): Promise<{ server: Server; port: number }> {
     // Plain-HTTP request in absolute form: "GET http://host/path HTTP/1.1".
     const upstream = routeFor(req);
     if (upstream === null) {
-      res.writeHead(407, { "Proxy-Authenticate": 'Basic realm="lookacrawler"', [BLOCKED_HEADER]: "1" });
+      res.writeHead(407, { "Proxy-Authenticate": 'Basic realm="lookacrawler"', [BLOCKED_HEADER]: BLOCKED_TOKEN });
       res.end();
       return;
     }
@@ -365,7 +371,7 @@ function startServer(): Promise<{ server: Server; port: number }> {
       target = new URL(req.url || "");
       if (target.protocol !== "http:") throw new Error("bad scheme");
     } catch {
-      res.writeHead(400, { [BLOCKED_HEADER]: "1" });
+      res.writeHead(400, { [BLOCKED_HEADER]: BLOCKED_TOKEN });
       res.end();
       return;
     }
@@ -373,13 +379,13 @@ function startServer(): Promise<{ server: Server; port: number }> {
     try {
       ({ address } = await resolvePublicAddress(target.hostname));
     } catch (error) {
-      res.writeHead(403, { "Content-Type": "application/json", [BLOCKED_HEADER]: "1" });
+      res.writeHead(403, { "Content-Type": "application/json", [BLOCKED_HEADER]: BLOCKED_TOKEN });
       res.end(JSON.stringify({ error: errorMessage(error) }));
       return;
     }
     if (upstream) {
       forwardOverTunnel(req, res, target, address, upstream).catch(() => {
-        if (!res.headersSent) res.writeHead(502, { [BLOCKED_HEADER]: "1" });
+        if (!res.headersSent) res.writeHead(502, { [BLOCKED_HEADER]: BLOCKED_TOKEN });
         res.end();
       });
       return;
@@ -403,7 +409,7 @@ function startServer(): Promise<{ server: Server; port: number }> {
     outbound.on("socket", (sock) => sock.unref());
     outbound.on("timeout", () => outbound.destroy(new Error("upstream timeout")));
     outbound.on("error", () => {
-      if (!res.headersSent) res.writeHead(502, { [BLOCKED_HEADER]: "1" });
+      if (!res.headersSent) res.writeHead(502, { [BLOCKED_HEADER]: BLOCKED_TOKEN });
       res.end();
     });
     req.pipe(outbound);

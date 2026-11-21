@@ -2,6 +2,7 @@
 import { formatJinaReader } from "./jina-format.js";
 
 import { readFile, writeFile } from "fs/promises";
+import { failureEnvelope } from "./errors.js";
 import { EXCEL_PT_BR, toSafeCsv } from "./csv-safe.js";
 
 const VERSION = "1.1.2";
@@ -263,8 +264,11 @@ async function runCli() {
         console.log(jinaFormat ? formatJinaReader(url, markdown) : markdown);
       }
     } catch (err: any) {
-      console.error(`Extraction error: ${err.message || err}`);
-      process.exit(1);
+      // --json callers parse stdout: give them the same envelope as the tiktok
+      // commands instead of a bare stderr line.
+      if (isJson) console.log(JSON.stringify(failureEnvelope(err, { url, mode }), null, 2));
+      else console.error(`Extraction error: ${err.message || err}`);
+      process.exitCode = 1;
     }
     return;
   }
@@ -411,6 +415,12 @@ async function runCli() {
         extraReviews: args.includes("--reviews"),
         lang: getOption(args, "--lang"),
       });
+      // A failed run (missing scraper, timeout, scraper error) also comes back
+      // with total 0; printing "Found 0 leads" hid it as "no businesses here".
+      if (!res.success) {
+        console.error(`Maps discovery error: ${res.error || "search failed"}`);
+        process.exit(1);
+      }
       const outputJson = JSON.stringify(res, null, 2);
       if (outputFile) {
         await writeFile(outputFile, outputJson, "utf8");
@@ -442,10 +452,12 @@ async function runCli() {
       const outputJson = JSON.stringify(res, null, 2);
       if (outputFile) {
         await writeFile(outputFile, outputJson, "utf8");
-        console.log(`Enrichment complete. Saved to ${outputFile}`);
+        console.log(`Enrichment ${res.enrichmentSuccess ? "complete" : `failed (${res.status})`}. Saved to ${outputFile}`);
       } else {
         console.log(outputJson);
       }
+      // The JSON still carries the partial data; the exit code tells scripts it failed.
+      if (!res.enrichmentSuccess) process.exitCode = 1;
     } catch (err: any) {
       console.error(`Enrichment error: ${err.message || err}`);
       process.exit(1);
