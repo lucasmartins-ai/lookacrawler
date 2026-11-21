@@ -45,6 +45,9 @@ Commands:
   serve                       Start the MCP server (stdio or SSE HTTP transport).
   --help, -h                  Show this help text.
   --version, -v               Show version number.
+  --no-escalate               Never retry a fast fetch blocked by anti-bot in the stealth browser.
+                              The CLI escalates by default (LOOKACRAWLER_AUTO_STEALTH=1); the
+                              library and MCP server do not unless that env var is set.
 
 Options for 'extract':
   --mode <fast|deep>          Extraction mode: fast (fetch) or deep (Playwright browser). Default: fast
@@ -57,6 +60,9 @@ Options for 'extract':
   --json                      Output formatted JSON response with statistics.
   --jina-format               Output Jina Reader-compatible metadata headers.
   --no-cache                  Bypass local SQLite cache.
+
+Options for 'map' / 'crawl':
+  --ignore-robots             Do not apply robots.txt Disallow/Allow rules (respected by default).
 
 Options for 'contacts':
   --no-deep                   Skip crawling linked contact/about subpages.
@@ -206,6 +212,10 @@ async function runCli() {
     await import("./index.js");
     return "serve";
   }
+
+  // ponytail: one env var gates both escalation sites (extractFast, enrich's home fetch).
+  if (args.includes("--no-escalate")) process.env.LOOKACRAWLER_AUTO_STEALTH = "0";
+  else process.env.LOOKACRAWLER_AUTO_STEALTH ??= "1";
 
   const positionalUrls = getPositionalArgs(args, command);
 
@@ -533,6 +543,7 @@ async function runCli() {
       const result = await mapWebsite({
         url,
         maxUrls,
+        ignoreRobots: args.includes("--ignore-robots"),
         includePatterns: includePattern ? [includePattern] : undefined,
         excludePatterns: excludePattern ? [excludePattern] : undefined,
       });
@@ -578,6 +589,7 @@ async function runCli() {
         linkFormat,
         imageMode,
         concurrency,
+        ignoreRobots: args.includes("--ignore-robots"),
         includePatterns: includePattern ? [includePattern] : undefined,
         excludePatterns: excludePattern ? [excludePattern] : undefined,
       });

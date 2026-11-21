@@ -8,7 +8,7 @@
 
 import { writeFile } from "node:fs/promises";
 import { discoverLocalLeads, type GoogleMapsLead } from "./maps-bridge.js";
-import { deepEnrichLead, type EnrichedLeadResult } from "./enrichment-bridge.js";
+import { deepEnrichLead, mapsEvidence, type EnrichedLeadResult } from "./enrichment-bridge.js";
 import { extractDomain, type Locale } from "./competitor-intelligence.js";
 import { lintAntiSlop } from "./anti-slop-linter.js";
 import { toSafeCsv } from "./csv-safe.js";
@@ -164,6 +164,7 @@ function bareLead(raw: GoogleMapsLead): EnrichedLeadResult {
     website: raw.web_site, rating: raw.review_rating, reviews: raw.review_count,
     emails: raw.emails ? [...raw.emails] : [], socialLinks: {}, additionalPhones: [], decisionMakers: [],
     markdownSummary: "", estimatedTokens: 0, sourcePagesCrawled: [], enrichmentSuccess: false,
+    evidence: mapsEvidence(raw, raw.emails ?? [], new Date().toISOString()),
   };
 }
 

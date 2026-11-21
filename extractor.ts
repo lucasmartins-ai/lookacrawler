@@ -630,6 +630,22 @@ function renderDocument(
 }
 
 /**
+ * Whether a fast fetch stopped by an anti-bot page may be retried in the
+ * stealth browser. Off unless LOOKACRAWLER_AUTO_STEALTH is "1"/"true": getting
+ * past a bot wall is the caller's decision. The CLI turns it on (see cli.ts).
+ * Read at call time so tests and long-lived processes can flip it.
+ */
+export function autoStealthEnabled(): boolean {
+  return /^(1|true)$/i.test(process.env.LOOKACRAWLER_AUTO_STEALTH ?? "");
+}
+
+/** Message on an anti-bot failure that was not escalated, so callers know the switch. */
+export function withEscalationHint(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(`${message} (not retried in the stealth browser; set LOOKACRAWLER_AUTO_STEALTH=1 or use mode "deep")`);
+}
+
+/**
  * Execute Fast Extraction pipeline with retries:
  * Native Fetch -> Shared Token-Optimization Pipeline
  */
@@ -665,6 +681,11 @@ async function extractFastOnce(options: FastExtractOptions): Promise<string> {
     // to pass — without this, the default `fast` path silently returns 0 bytes.
     const message = error instanceof Error ? error.message : String(error);
     const antiBot = /Anti-Bot protection/i.test(message) || /cloudflare/i.test(message) || /just a moment/i.test(message);
+    if (antiBot && !autoStealthEnabled()) {
+      recordMetric("failures");
+      recordMetric("durationMs", Date.now() - startedAt);
+      throw withEscalationHint(error);
+    }
     if (antiBot) {
       recordMetric("escalations");
       console.error(`[lookacrawler] fast blocked by anti-bot (${message.slice(0, 90)}); escalating to deep/stealth...`);

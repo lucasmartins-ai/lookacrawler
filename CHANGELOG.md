@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `crawl` and `map` (CLI and MCP) now obey `robots.txt` `Disallow`/`Allow`
+  rules for `User-agent: *` and `User-agent: lookacrawler` (a specific group
+  replaces `*`; longest match wins, `Allow` wins ties; `*` and `$` wildcards).
+  The old docs said robots was respected, but only `Sitemap` lines were read.
+  Results gain `robots` (`applied` / `none` / `unreachable` / `ignored`) and
+  `skippedByRobots`. A 404 means no rules; a 429, 5xx or timeout means nothing
+  is fetched (RFC 9309 §2.3.1.4). Opt out with `--ignore-robots` or
+  `ignore_robots: true`. Single-URL `extract` is unaffected.
+- The fast-to-stealth-browser escalation on an anti-bot block is now opt-in
+  through `LOOKACRAWLER_AUTO_STEALTH=1`. The CLI sets it by default, because
+  existing callers (`lookacrawler enrich` in batch scripts, the lookacrawler
+  skill's "prefer fast, it escalates" rule) rely on it; `--no-escalate`
+  turns it off. The library and MCP server no longer escalate unless the env
+  var is set, and the unescalated failure still classifies as `anti_bot` and
+  names the switch.
+
 ### Added
 
 - `watch <url|@handle> [--platform P] [--limit N]` (MCP `watch_social`): profile and recent
@@ -19,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Instagram grid no longer shows counts, Facebook shows no machine dates. A CAPTCHA is
   `blocked` and is never solved. Checked live 21/11/2026 on X, Instagram, Threads,
   Facebook and TikTok (profile; TikTok then showed a CAPTCHA, reported as `blocked`).
+- Per-field provenance: `contacts`, `enrich` and `enrich-batch` results carry
+  an `evidence` list with one `{type, value, e164?, source_url, observed_at}`
+  entry per email and phone. The flat `emails` / `phones` /
+  `additionalPhones` arrays are unchanged. Values a lead arrived with (Maps
+  listing or caller input) point at the Maps `link`, or `"input"`; values read
+  from cached markdown carry the cache time, not the request time.
 - `tiktok profile @handle [--limit N]` and `tiktok trends [--region BR] [--period 7|30]
   [--kind hashtag|video]`, also as MCP tools `tiktok_profile` / `tiktok_trends`.
   Profiles come from `yt-dlp --flat-playlist`, falling back to a plain headless
@@ -64,6 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bridge reads (`social`, `watch`) run in the tab the command navigated: the domain match
   could pick another tab of the same site, such as a DM tab another job had open.
+- README comparison table: Firecrawl pricing and MCP rows corrected from the
+  pricing page and the firecrawl-mcp-server README (checked 2026-11-21), with
+  links; the old "$16 to $99+/month" and "Community Wrapper" were out of date.
 - `social fb-posts` / `fb-search` read the 10/2026 Facebook layout. Post body from
   `[data-ad-rendering-role=story_message]` (fallback `[data-ad-preview=message]`),
   permalink from the bare timestamp link that Facebook fills on hover (search:

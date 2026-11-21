@@ -45,7 +45,7 @@ How to use
 - mode="fast" (default): native HTTP GET. mode="deep": headless Chrome with stealth fingerprint for JS-heavy or Cloudflare/Turnstile-protected pages.
 - css_selector scopes to a single element (e.g. "main", "article", "#content").
 - Pass headers/cookies for gated or geo-restricted content. Providing any of headers/cookies/proxy bypasses the SQLite cache.
-- No auth required. Respects robots/rate-limit via retry backoff.
+- No auth required. Per-domain rate limit and retry backoff. A single URL is a user request, so robots.txt is not consulted (crawl_website and map_website respect it).
 
 Returns
 Markdown text. Cache hits are prefixed with a NOTE marker. Unsupported URLs (non-http, private IP, SSRF) fail with isError: true and a reason.`,
@@ -396,12 +396,13 @@ Returns a list of URLs with source and modification metadata. Useful for explori
       inputSchema: {
         url: z.string().url().describe("Target website URL or domain root (e.g. 'https://example.com')."),
         max_links: z.number().int().min(1).max(500).default(100).optional().describe("Maximum number of links to discover (default: 100)."),
+        ignore_robots: z.boolean().default(false).optional().describe("Skip robots.txt Disallow/Allow rules (respected by default)."),
       },
     },
-    async ({ url, max_links }) => {
+    async ({ url, max_links, ignore_robots }) => {
       try {
         const { mapWebsite } = await loadExtractor();
-        const result = await mapWebsite({ url, maxLinks: max_links });
+        const result = await mapWebsite({ url, maxLinks: max_links, ignoreRobots: ignore_robots });
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
@@ -430,9 +431,10 @@ Returns a list of URLs with source and modification metadata. Useful for explori
         mode: z.enum(["fast", "deep"]).default("fast").describe("Crawl mode ('fast' native fetch or 'deep' Playwright browser)."),
         link_format: z.enum(["inline", "references", "strip"]).default("inline").optional().describe("Formatting of extracted hyperlinks."),
         image_mode: z.enum(["ignore", "alt_only", "markdown"]).default("ignore").optional().describe("Formatting of images."),
+        ignore_robots: z.boolean().default(false).optional().describe("Skip robots.txt Disallow/Allow rules (respected by default)."),
       },
     },
-    async ({ start_url, max_depth, max_pages, include_patterns, exclude_patterns, mode, link_format, image_mode }) => {
+    async ({ start_url, max_depth, max_pages, include_patterns, exclude_patterns, mode, link_format, image_mode, ignore_robots }) => {
       try {
         const { crawlWebsite } = await loadExtractor();
         const result = await crawlWebsite({
@@ -444,6 +446,7 @@ Returns a list of URLs with source and modification metadata. Useful for explori
           mode,
           linkFormat: link_format,
           imageMode: image_mode,
+          ignoreRobots: ignore_robots,
         });
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
