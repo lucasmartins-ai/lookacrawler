@@ -53,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guard as the MCP endpoints. Fields lookacrawler cannot honour (screenshots,
   subdomains, regex paths, geo location, robots.txt compliance) get a `400`
   naming the field instead of being ignored. Code in `v2-api.ts`.
+- `lookacrawler init [--dry-run]` registers the MCP server in Claude Code,
+  Cursor and Codex configs that already exist. Each file is backed up (mode
+  0600) and replaced atomically; files that do not parse, already have a
+  `lookacrawler` entry, or change during the run are left untouched. The dry run
+  prints only the added lines, never the rest of the config.
 - `tiktok profile @handle [--limit N]` and `tiktok trends [--region BR] [--period 7|30]
   [--kind hashtag|video]`, also as MCP tools `tiktok_profile` / `tiktok_trends`.
   Profiles come from `yt-dlp --flat-playlist`, falling back to a plain headless

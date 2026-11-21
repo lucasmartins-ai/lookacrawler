@@ -16,7 +16,8 @@ Usage:
   lookacrawler <command> [options]
 
 Commands:
-  extract <url>               Extract token-optimized Markdown from a URL.
+  init [--dry-run]            Add the lookacrawler MCP server to Claude Code, Cursor and Codex.
+  extract <url>              Extract token-optimized Markdown from a URL.
   contacts <url>              Extract emails, phones, WhatsApp links and social profiles.
   places <query>              Search local businesses on Google Maps.
   map <url>                   Discover domain URLs via robots.txt, sitemaps, and links.
@@ -214,6 +215,11 @@ async function runCli() {
     // Forward to index.ts server
     await import("./index.js");
     return "serve";
+  }
+
+  if (command === "init") {
+    await (await import("./init.js")).runInitCli(args);
+    return;
   }
 
   // ponytail: one env var gates both escalation sites (extractFast, enrich's home fetch).

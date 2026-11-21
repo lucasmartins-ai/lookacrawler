@@ -70,7 +70,18 @@ Firecrawl rows checked on 2026-11-21 against the [pricing page](https://www.fire
 
 ## 🔌 1-Click MCP Setup (Claude Desktop & Cursor)
 
-Add LookaCrawler to your `claude_desktop_config.json` or Cursor MCP settings:
+`lookacrawler init` adds the MCP server to Claude Code (`~/.claude.json`),
+Cursor (`~/.cursor/mcp.json`) and Codex (`~/.codex/config.toml`) when those
+files exist. It backs each file up first (`<file>.lookacrawler-backup-<time>`),
+leaves alone any file it cannot parse or that already has a `lookacrawler`
+entry, and `--dry-run` prints the lines it would add without writing anything.
+
+```bash
+bun run cli.ts init --dry-run
+bun run cli.ts init
+```
+
+Or add it by hand to `claude_desktop_config.json` or Cursor MCP settings:
 
 ```json
 {
