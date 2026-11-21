@@ -70,7 +70,18 @@ Firecrawl rows checked on 2026-11-21 against the [pricing page](https://www.fire
 
 ## 🔌 1-Click MCP Setup (Claude Desktop & Cursor)
 
-Add LookaCrawler to your `claude_desktop_config.json` or Cursor MCP settings:
+`lookacrawler init` adds the MCP server to Claude Code (`~/.claude.json`),
+Cursor (`~/.cursor/mcp.json`) and Codex (`~/.codex/config.toml`) when those
+files exist. It backs each file up first (`<file>.lookacrawler-backup-<time>`),
+leaves alone any file it cannot parse or that already has a `lookacrawler`
+entry, and `--dry-run` prints the lines it would add without writing anything.
+
+```bash
+bun run cli.ts init --dry-run
+bun run cli.ts init
+```
+
+Or add it by hand to `claude_desktop_config.json` or Cursor MCP settings:
 
 ```json
 {
@@ -102,6 +113,17 @@ cd lookacrawler
 # Install dependencies
 bun install
 ```
+
+#### Single binary (no Bun needed)
+
+Tagged releases attach `lookacrawler-darwin-arm64` and `lookacrawler-linux-x64`
+(with `SHA256SUMS`). Build them yourself with `bun run build:darwin-arm64` or
+`bun run build:linux-x64` (output in `dist/`). Fast mode, `map`, `crawl`,
+`contacts`, `serve` and `init` work from the binary alone. Playwright is not
+bundled: deep mode needs `npm i playwright && npx playwright install chromium`
+in a folder you choose, with `LOOKACRAWLER_PLAYWRIGHT_DIR` set to that folder
+(or the `node_modules` beside the binary). The binary never loads Playwright
+from the working directory, so a project you open cannot plant its own copy.
 
 ### 2. CLI Commands
 
@@ -206,6 +228,37 @@ Side effect: DNS is resolved on this machine, not at the proxy, so geo-DNS/CDN
 edges follow your location rather than the proxy's, and SOCKS4 cannot reach
 IPv6-only sites. `LOOKACRAWLER_ALLOW_LOCAL=true` turns all of this off and talks
 to the proxy directly (for local development only).
+
+#### Firecrawl v2-compatible API
+
+The SSE server also answers `POST /v2/scrape`, `POST /v2/map`, `POST /v2/crawl`
+and `GET /v2/crawl/:id` in Firecrawl's v2 shapes, behind the same token and
+egress guard. Point a Firecrawl SDK at it:
+
+```js
+import { Firecrawl } from "firecrawl";
+const app = new Firecrawl({ apiUrl: "http://127.0.0.1:3000", apiKey: process.env.LOOKACRAWLER_SSE_TOKEN });
+const doc = await app.scrape("https://example.com", { formats: ["markdown", "links"] });
+```
+
+Only what lookacrawler can honour is accepted; anything else gets a `400` that
+names the field, never a silent no-op:
+
+- Formats: `markdown` and `links`. No screenshots, HTML, JSON extraction or summaries.
+- `proxy`: `basic`/`auto` fetch over HTTP (`auto` escalates to the browser on an
+  anti-bot page when `LOOKACRAWLER_AUTO_STEALTH=1`); `stealth`/`enhanced`, `waitFor` and `actions` (`wait`,
+  `click`, `scroll`) use the browser.
+- Map covers one host (`includeSubdomains: false`), sitemap plus home-page links;
+  `search` ranks matching URLs first; `limit` up to 5,000.
+- Crawl `limit` up to 100 pages, `maxDiscoveryDepth` up to 5, at most 2 crawls
+  running. `includePaths`/`excludePaths` are plain path substrings; regex syntax
+  and quantifiers (`*`, `+`, `?`) get a 400. Crawls obey robots.txt unless
+  `ignoreRobotsTxt` is `true`. `headers` go only to the start
+  origin. Finished jobs live in memory for an hour, within a 200 MB budget.
+- `timeout` bounds the whole scrape or map (`408` when it runs out).
+  `metadata.statusCode` is always `200`. Fast mode turns an HTTP 4xx/5xx into an
+  error; browser mode (`stealth`, `actions`) still returns the rendered error page.
+- No `/v2/search`, batch scrape, crawl cancel, `location` or v0/v1 routes.
 
 ### 3. Google Maps engine (optional)
 

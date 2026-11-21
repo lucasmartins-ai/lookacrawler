@@ -46,6 +46,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `additionalPhones` arrays are unchanged. Values a lead arrived with (Maps
   listing or caller input) point at the Maps `link`, or `"input"`; values read
   from cached markdown carry the cache time, not the request time.
+- Firecrawl v2-compatible routes on the SSE server: `POST /v2/scrape`,
+  `POST /v2/map`, `POST /v2/crawl` and `GET /v2/crawl/:id`, so a Firecrawl SDK
+  pointed at `http://127.0.0.1:<port>` works unchanged (checked with the
+  `firecrawl` JS SDK 4.52.0). Same bearer token, Origin/Host checks and egress
+  guard as the MCP endpoints. Fields lookacrawler cannot honour (screenshots,
+  subdomains, regex paths, geo location) get a `400`
+  naming the field instead of being ignored. Code in `v2-api.ts`.
+- `bench/icp-benchmark.ts`: homepage-scrape benchmark through any Firecrawl
+  v2-compatible endpoint, so lookacrawler and firecrawl-local are measured the
+  same way (sequential, tools interleaved per site, 30 s timeout, success =
+  HTTP 200 with at least 100 visible characters, chars/4 tokens, one e-mail
+  regex). Writes `per-site.csv` (no URLs) and `summary.md`. The site list is
+  not in the repo: it comes from a private CRM.
+- `lookacrawler init [--dry-run]` registers the MCP server in Claude Code,
+  Cursor and Codex configs that already exist. Each file is backed up (mode
+  0600) and replaced atomically; files that do not parse, already have a
+  `lookacrawler` entry, or change during the run are left untouched. The dry run
+  prints only the added lines, never the rest of the config.
+- Single-file binaries: `bun run build:darwin-arm64` / `build:linux-x64`
+  (`scripts/build-binary.ts`, `bun build --compile` with minify), a tag-triggered
+  `release.yml` that attaches both plus `SHA256SUMS`, and a CI step that builds
+  the linux-x64 binary and runs `--version`, `init --dry-run` and `extract`
+  outside the repo. Measured on an M-series Mac (6 runs, `/usr/bin/time -l`,
+  warm runs, cold first run excluded): darwin-arm64 binary 73 MB, linux-x64
+  104 MB; `--version` 0.14 s / 70 MB RSS (via `bun cli.ts`: 0.02 s / 31 MB);
+  `extract https://example.com` 0.41-0.51 s / 163 MB (via `bun cli.ts`:
+  0.56-0.58 s / 177 MB). Commit d1f3b97, 2026-11-21.
 - `tiktok profile @handle [--limit N]` and `tiktok trends [--region BR] [--period 7|30]
   [--kind hashtag|video]`, also as MCP tools `tiktok_profile` / `tiktok_trends`.
   Profiles come from `yt-dlp --flat-playlist`, falling back to a plain headless
@@ -94,6 +121,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README comparison table: Firecrawl pricing and MCP rows corrected from the
   pricing page and the firecrawl-mcp-server README (checked 2026-11-21), with
   links; the old "$16 to $99+/month" and "Community Wrapper" were out of date.
+- `crawl` sends `headers` and cookies only to the start origin. Pages on the same
+  host but another scheme or port are still crawled, without credentials.
+- Playwright is imported on first browser use instead of at module load
+  (`loadChromium()` in `browser-manager.ts`, also used by `tiktok.ts`). With a
+  static import every command, `--version` included, crashed wherever
+  Playwright was not installed; deep mode now fails with install instructions.
+  The compiled binary loads Playwright only from `LOOKACRAWLER_PLAYWRIGHT_DIR`
+  or beside the binary, never from the working directory, where an opened
+  project could plant a `node_modules/playwright`.
 - `social fb-posts` / `fb-search` read the 10/2026 Facebook layout. Post body from
   `[data-ad-rendering-role=story_message]` (fallback `[data-ad-preview=message]`),
   permalink from the bare timestamp link that Facebook fills on hover (search:

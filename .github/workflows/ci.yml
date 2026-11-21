@@ -20,3 +20,10 @@ jobs:
       run: bunx tsc --noEmit
     - name: Run Tests
       run: bun test --timeout 20000
+    - name: Build and smoke-test the linux-x64 binary
+      run: |
+        bun run build:linux-x64
+        mkdir -p "$RUNNER_TEMP/bin-smoke" && cd "$RUNNER_TEMP/bin-smoke"
+        "$GITHUB_WORKSPACE/dist/lookacrawler-linux-x64" --version
+        HOME="$RUNNER_TEMP/bin-smoke" "$GITHUB_WORKSPACE/dist/lookacrawler-linux-x64" init --dry-run
+        "$GITHUB_WORKSPACE/dist/lookacrawler-linux-x64" extract https://example.com | grep -q "documentation examples"

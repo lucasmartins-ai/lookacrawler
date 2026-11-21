@@ -13,6 +13,8 @@
     "cli": "bun run cli.ts",
     "serve": "bun run index.ts --transport sse",
     "build": "bun build index.ts --target bun --external playwright --external playwright-core --outdir ./dist",
+    "build:darwin-arm64": "bun scripts/build-binary.ts bun-darwin-arm64",
+    "build:linux-x64": "bun scripts/build-binary.ts bun-linux-x64",
     "build:maps": "cd google-maps-scraper && go build -o maps-leads$(go env GOEXE) .",
     "test": "bun test --timeout 20000"
   },
