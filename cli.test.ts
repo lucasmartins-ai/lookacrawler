@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { spawnSync } from "child_process";
+import { runCli } from "./test-spawn";
 
 describe("LookaCrawler CLI Suite", () => {
   test("lookacrawler --help outputs usage instructions", () => {
@@ -30,13 +31,11 @@ describe("LookaCrawler CLI Suite", () => {
       }),
     });
     try {
-      const proc = Bun.spawn(
-        ["bun", "run", "cli.ts", "extract", "--mode", "fast", "--no-cache", `http://127.0.0.1:${server.port}/`],
-        { cwd: import.meta.dir, env: { ...process.env, LOOKACRAWLER_ALLOW_LOCAL: "true" }, stdout: "pipe", stderr: "pipe" }
-      );
-      const stdout = await new Response(proc.stdout).text();
-      expect(await proc.exited).toBe(0);
-      expect(stdout).toContain("example fixture");
+      const r = await runCli(["extract", "--mode", "fast", "--no-cache", `http://127.0.0.1:${server.port}/`], {
+        env: { ...process.env, LOOKACRAWLER_ALLOW_LOCAL: "true" },
+      });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("example fixture");
     } finally {
       server.stop(true);
     }
@@ -55,11 +54,11 @@ describe("LookaCrawler CLI Suite", () => {
     });
     const base = `http://127.0.0.1:${server.port}`;
     const run = async (...urls: string[]) => {
-      const proc = Bun.spawn(["bun", "run", "cli.ts", "contacts", "--no-deep", "--concurrency", "2", ...urls], {
-        cwd: import.meta.dir, env: { ...process.env, LOOKACRAWLER_ALLOW_LOCAL: "true" }, stdout: "pipe", stderr: "pipe",
+      const r = await runCli(["contacts", "--no-deep", "--concurrency", "2", ...urls], {
+        env: { ...process.env, LOOKACRAWLER_ALLOW_LOCAL: "true" },
       });
-      const out = await new Response(proc.stdout).text();
-      expect(await proc.exited).toBe(0);
+      const out = r.stdout;
+      expect(r.code).toBe(0);
       return JSON.parse(out.slice(out.indexOf(out.trimStart()[0])));
     };
     try {

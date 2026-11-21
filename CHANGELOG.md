@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `maps` / `discover_local_leads`: a scraper that exits before reading the
+  query no longer crashes the CLI or MCP server with an uncaught `EPIPE`.
+- CI runs on Bun 1.4.5. On 1.3.14, `bun test` sometimes missed a spawned
+  child's exit or pipe EOF, so CLI tests timed out at random (5 of 10 matrix
+  legs failed on 1.3.14, 0 of 20 spawn hangs on 1.4.5, 21/11/2026).
+
 ### Changed
 
 - `crawl` and `map` (CLI and MCP) now obey `robots.txt` `Disallow`/`Allow`

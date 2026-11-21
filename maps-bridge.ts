@@ -757,7 +757,11 @@ export async function discoverLocalLeadsViaCli(
       finish(code);
     });
 
-    // Send query to stdin and close write stream
+    // Send query to stdin and close write stream. A scraper that exits before reading it makes the
+    // write fail with EPIPE; without a listener that is an uncaught exception that takes down the CLI or MCP process.
+    // ponytail: the error is not reported: Bun on Linux emits it unreliably (often after "close"), and
+    // a scraper that dies before reading exits non-zero, which `finish` already reports.
+    child.stdin.on("error", () => {});
     child.stdin.write(`${fullQuery}\n`);
     child.stdin.end();
   });
