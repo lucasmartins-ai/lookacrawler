@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeAll, afterAll, afterEach } from "bun:test";
+import { runCli } from "./test-spawn";
 import { extractContacts } from "./contacts.js";
 import { deepEnrichLead } from "./enrichment-bridge.js";
 import { crawlWebsite, mapWebsite } from "./crawler.js";
@@ -327,15 +328,10 @@ describe("fast -> stealth escalation is opt-in", () => {
 
   test("CLI --no-escalate (and an explicit env 0) turn the CLI default off", async () => {
     for (const [extraArgs, env] of [[["--no-escalate"], {}], [[], { LOOKACRAWLER_AUTO_STEALTH: "0" }]] as const) {
-      const proc = Bun.spawn(["bun", "cli.ts", "extract", `${base}/blocked`, "--json", "--no-cache", "--max-retries", "1", ...extraArgs], {
-        cwd: import.meta.dir,
+      const r = await runCli(["extract", `${base}/blocked`, "--json", "--no-cache", "--max-retries", "1", ...extraArgs], {
         env: { ...process.env, LOOKACRAWLER_AUTO_STEALTH: undefined, ...env },
-        stdout: "pipe",
-        stderr: "pipe",
       });
-      const out = await new Response(proc.stdout).text();
-      await proc.exited;
-      const body = JSON.parse(out);
+      const body = JSON.parse(r.stdout);
       expect(body.status).toBe("anti_bot");
       expect(body.reason).toContain("not retried in the stealth browser");
     }

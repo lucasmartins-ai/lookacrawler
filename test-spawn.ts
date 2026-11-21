@@ -1,12 +1,15 @@
 // Test-only helper: run `bun cli.ts` in a child and collect its output.
-// CI hangs at random in spawned CLI children (3 of 12 runs, 21/11/2026; a different test each time).
-// The deadline sits under the test timeout so a hang fails here with evidence instead of a bare
-// "timed out": which of stdout/stderr/exit the parent saw, the child's process state, and the
-// output so far. That tells "child stuck" apart from "parent missed the exit".
+// CI failed at random on spawned CLI children (3 of 12 runs, 21/11/2026; a different test each time).
+// Measured on CI: the child had exited (zombie, both pipes at EOF) but `proc.exited` inside `bun test`
+// never resolved, while 1,600 spawns of the same commands from bash never hung. So the CLI is fine and
+// the test runner misses an exit now and then. Workaround: when both pipes are closed and no exit
+// arrives within EXIT_GRACE_MS, log it and run the command once more. A child that is still alive with
+// open pipes is a real hang: it is never retried and fails with its process state and output so far.
 import { readdirSync, readFileSync, readlinkSync } from "node:fs";
 
 export type CliResult = { code: number; stdout: string; stderr: string };
 
+const EXIT_GRACE_MS = 2_000;
 const DEADLINE_MS = Number(process.env.LOOKACRAWLER_TEST_SPAWN_DEADLINE_MS || 10_000);
 
 async function drain(stream: ReadableStream<Uint8Array>, sink: { text: string; closed: boolean }) {
@@ -44,10 +47,9 @@ function processState(pid: number): string {
   }
 }
 
-export async function runCli(
-  args: string[],
-  opts: { env?: Record<string, string | undefined>; stdin?: string; deadlineMs?: number } = {}
-): Promise<CliResult> {
+type Opts = { env?: Record<string, string | undefined>; stdin?: string; deadlineMs?: number };
+
+async function spawnOnce(args: string[], opts: Opts): Promise<CliResult | "missed_exit"> {
   const proc = Bun.spawn(["bun", "cli.ts", ...args], {
     cwd: import.meta.dir,
     env: opts.env ?? process.env,
@@ -58,23 +60,55 @@ export async function runCli(
   const out = { text: "", closed: false };
   const err = { text: "", closed: false };
   let exited = false;
-  const done = Promise.all([drain(proc.stdout, out), drain(proc.stderr, err), proc.exited.then(() => (exited = true))]);
+  let code: number | null = null;
+  const exit = proc.exited.then((c) => {
+    exited = true;
+    code = c;
+  });
+  exit.catch(() => {});
+  let settled = false;
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  const after = <T>(ms: number, value: T) =>
+    new Promise<T>((resolve) => {
+      if (!settled) timers.push(setTimeout(resolve, ms, value));
+    });
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<"deadline">((resolve) => (timer = setTimeout(resolve, opts.deadlineMs ?? DEADLINE_MS, "deadline")));
-  const winner = await Promise.race([done, deadline]);
-  clearTimeout(timer);
-
-  if (winner === "deadline") {
-    const state = processState(proc.pid);
+  const pipesThenExit = Promise.all([drain(proc.stdout, out), drain(proc.stderr, err)]).then(() =>
+    Promise.race([exit.then(() => "ok" as const), after(EXIT_GRACE_MS, "missed_exit" as const)])
+  );
+  let outcome: "ok" | "missed_exit" | "deadline";
+  try {
+    outcome = await Promise.race([pipesThenExit, after(opts.deadlineMs ?? DEADLINE_MS, "deadline" as const)]);
+  } catch (e) {
     proc.kill("SIGKILL");
-    throw new Error(
-      `CLI child hung: bun cli.ts ${args.join(" ")}\n` +
-        `parent saw: stdoutClosed=${out.closed} stderrClosed=${err.closed} exited=${exited} exitCode=${proc.exitCode}\n` +
-        `child: pid=${proc.pid} ${state}\n` +
-        `stdout so far: ${JSON.stringify(out.text.slice(-500))}\n` +
-        `stderr so far: ${JSON.stringify(err.text.slice(-500))}`
-    );
+    throw e;
+  } finally {
+    settled = true;
+    timers.forEach(clearTimeout);
   }
-  return { code: proc.exitCode ?? -1, stdout: out.text, stderr: err.text };
+
+  if (outcome === "ok") return { code: code ?? proc.exitCode ?? -1, stdout: out.text, stderr: err.text };
+  const state = processState(proc.pid);
+  // Retry only a child that really ended (zombie, or already reaped); one still alive is a real hang.
+  const ended = /^state=(Z|gone)/.test(state);
+  proc.kill("SIGKILL");
+  if (outcome === "missed_exit" && ended) {
+    console.warn(`test-spawn: exit not observed for bun cli.ts ${args.join(" ")} (pid=${proc.pid} ${state}); re-running`);
+    return "missed_exit";
+  }
+  throw new Error(
+    `CLI child hung: bun cli.ts ${args.join(" ")}\n` +
+      `parent saw: stdoutClosed=${out.closed} stderrClosed=${err.closed} exited=${exited} exitCode=${proc.exitCode}\n` +
+      `child: pid=${proc.pid} ${state}\n` +
+      `stdout so far: ${JSON.stringify(out.text.slice(-500))}\n` +
+      `stderr so far: ${JSON.stringify(err.text.slice(-500))}`
+  );
+}
+
+export async function runCli(args: string[], opts: Opts = {}): Promise<CliResult> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const r = await spawnOnce(args, opts);
+    if (r !== "missed_exit") return r;
+  }
+  throw new Error(`CLI exit not observed twice in a row: bun cli.ts ${args.join(" ")}`);
 }

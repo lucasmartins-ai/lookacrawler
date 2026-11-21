@@ -3,8 +3,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { runCli } from "./test-spawn";
 
-// Other test files set LOOKACRAWLER_ALLOW_LOCAL in this process; a child that inherits it lets the
-// private-host check through and the audit test connects to 127.0.0.1:9 (hung 15 s on CI, 21/11/2026).
+// Other test files set LOOKACRAWLER_ALLOW_LOCAL in this process; a child must not inherit it, or the
+// audit test's private-host check is skipped. (The random CI timeouts were a missed exit: see test-spawn.ts.)
 const { LOOKACRAWLER_ALLOW_LOCAL: _allowLocal, ...childEnv } = process.env;
 
 const cli = (args: string[], stdin?: string) => runCli(args, { env: childEnv, stdin });
