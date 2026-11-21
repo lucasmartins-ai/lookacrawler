@@ -117,10 +117,19 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if _, err := s.repo.Get(ctx, id); err != nil {
 		return err
 	}
-	for _, p := range []string{filepath.Join(s.dataFolder, "results", id+".csv"), filepath.Join(s.dataFolder, "results", id+".partial.csv"), filepath.Join(s.dataFolder, "results", id+".tmp.csv"), filepath.Join(s.dataFolder, "exports", id)} {
-		_ = os.RemoveAll(p)
-	}
+	s.removeJobFiles(id)
 	return s.repo.Delete(ctx, id)
+}
+
+// removeJobFiles drops everything a job wrote, including the .raw.tmp and .tmp.csv a crashed worker leaves
+// behind (a finished job removes those itself), so Delete and Purge leave no orphan on disk.
+func (s *Service) removeJobFiles(id string) {
+	results := filepath.Join(s.dataFolder, "results")
+	for _, p := range []string{filepath.Join(results, id+".csv"), filepath.Join(results, id+".partial.csv"),
+		filepath.Join(results, id+".tmp.csv"), filepath.Join(results, id+".raw.tmp")} {
+		_ = os.Remove(p) // files only: a directory with one of these names is not ours to empty
+	}
+	_ = os.RemoveAll(filepath.Join(s.dataFolder, "exports", id))
 }
 
 func (s *Service) CreateExport(ctx context.Context, jobID string, filter ResultFilter) (Export, error) {
@@ -182,9 +191,9 @@ func (s *Service) Purge(ctx context.Context, before time.Time) (int, error) {
 		return 0, err
 	}
 	for _, id := range ids {
-		_ = os.Remove(filepath.Join(s.dataFolder, "results", id+".csv"))
-		_ = os.Remove(filepath.Join(s.dataFolder, "results", id+".partial.csv"))
-		_ = os.RemoveAll(filepath.Join(s.dataFolder, "exports", id))
+		if safeID(id) == nil {
+			s.removeJobFiles(id)
+		}
 	}
 	return len(ids), nil
 }

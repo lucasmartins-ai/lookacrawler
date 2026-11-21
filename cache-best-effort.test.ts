@@ -29,6 +29,22 @@ describe("cache is best-effort", () => {
     expect(r.stderr.match(/cache unavailable/g)?.length).toBe(1);
   });
 
+  test("opening the cache drops expired pages (the CLI never pruned before)", () => {
+    const db = join(mkdtempSync(join(tmpdir(), "lookacrawler-cache-")), "c.sqlite");
+    const seed = runWithDb(db, `
+      const c = await import("./cache.ts");
+      c.setCachedPage("old", "x", Date.now() - c.TTL_MS - 1000);
+      c.setCachedPage("new", "y");
+    `);
+    expect(seed.code).toBe(0);
+    const r = runWithDb(db, `
+      const c = await import("./cache.ts");
+      console.log(JSON.stringify(c.db.query("SELECT url FROM pages ORDER BY url").all().map((x) => x.url)));
+    `);
+    expect(r.code).toBe(0);
+    expect(r.stdout.trim()).toBe('["new"]');
+  });
+
   test("DB failing mid-run: writes and reads stop throwing", () => {
     const r = runWithDb(":memory:", `
       const c = await import("./cache.ts");
