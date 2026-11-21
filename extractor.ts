@@ -173,7 +173,11 @@ const PDF_DEADLINE_MS = 15_000;
  * parsing to a subprocess with a memory limit if hostile PDFs show up.
  */
 async function pdfToText(bytes: Buffer): Promise<string> {
-  const { getDocumentProxy } = await import("unpdf");
+  const { getResolvedPDFJS } = await import("unpdf");
+  const { getDocument } = await getResolvedPDFJS();
+  // Keep the task, not just the document: if the deadline hits while the
+  // document is still opening, destroying the task is what stops the parse.
+  const task = getDocument({ data: new Uint8Array(bytes), useSystemFonts: true });
   const deadline = Date.now() + PDF_DEADLINE_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const withinDeadline = <T>(step: Promise<T>): Promise<T> =>
@@ -184,9 +188,8 @@ async function pdfToText(bytes: Buffer): Promise<string> {
       }),
     ]).finally(() => clearTimeout(timer));
 
-  let pdf: Awaited<ReturnType<typeof getDocumentProxy>> | undefined;
   try {
-    pdf = await withinDeadline(getDocumentProxy(new Uint8Array(bytes)));
+    const pdf = await withinDeadline(task.promise);
     const pages: string[] = [];
     let chars = 0;
     for (let i = 1; i <= Math.min(pdf.numPages, MAX_PDF_PAGES); i++) {
@@ -206,7 +209,7 @@ async function pdfToText(bytes: Buffer): Promise<string> {
   } catch (err) {
     throw new Error(`PDF could not be parsed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300));
   } finally {
-    await pdf?.loadingTask.destroy();
+    await task.destroy();
   }
 }
 
