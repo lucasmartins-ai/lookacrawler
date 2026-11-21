@@ -53,6 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guard as the MCP endpoints. Fields lookacrawler cannot honour (screenshots,
   subdomains, regex paths, geo location, robots.txt compliance) get a `400`
   naming the field instead of being ignored. Code in `v2-api.ts`.
+- `bench/icp-benchmark.ts`: homepage-scrape benchmark through any Firecrawl
+  v2-compatible endpoint, so lookacrawler and firecrawl-local are measured the
+  same way (sequential, tools interleaved per site, 30 s timeout, success =
+  HTTP 200 with at least 100 visible characters, chars/4 tokens, one e-mail
+  regex). Writes `per-site.csv` (no URLs) and `summary.md`. The site list is
+  not in the repo: it comes from a private CRM.
 - `lookacrawler init [--dry-run]` registers the MCP server in Claude Code,
   Cursor and Codex configs that already exist. Each file is backed up (mode
   0600) and replaced atomically; files that do not parse, already have a
