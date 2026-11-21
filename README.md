@@ -27,16 +27,18 @@ Web crawling for Large Language Models (LLMs) is broken by default: modern web p
 
 | Feature | 🕷️ LookaCrawler | 🔥 Firecrawl (Cloud) | ⚡ Jina Reader |
 | :--- | :---: | :---: | :---: |
-| **Pricing / Cost** | **$0.00 (100% Free Open Source)** | $16 to $99+/month | Rate-limited API |
+| **Pricing / Cost** | **$0.00 (100% Free Open Source)** | Free tier of 1,000 credits/month; paid plans from $19/month (Hobby, $16 billed annually) to $749/month (Scale), Enterprise custom | Rate-limited API |
 | **Token Reduction** | **Median 90% fewer tokens (real pages) + Footnotes** | Standard Markdown | Basic Markdown |
 | **Autonomous Crawling** | **Native `map` & `crawl` (BFS + URL patterns)** | Cloud Crawler | Single-page only |
 | **Pre-Crawl Actions** | **Native Playwright (click, scroll, fill)** | Paid Addon | None |
 | **Link Formatting** | **Inline, References Footnotes, Strip** | Inline only | Inline only |
 | **Data Privacy** | **Local-first (Zero Telemetry)** | Cloud Provider | Cloud API |
-| **MCP Integration** | **Native Tools + Resources + Prompts** | Community Wrapper | None |
+| **MCP Integration** | **Native Tools + Resources + Prompts** | Official MCP server (`firecrawl-mcp`) and a hosted OAuth connector | None |
 | **JS Rendering** | **Real Chrome (Playwright)** | Cloud Proxies | Basic Headers |
 | **Local SQLite Cache** | **Built-in (24h TTL cache)** | Redis / Paid Addon | None |
 | **JS SPA Support** | **Playwright + Chrome Pool** | Cloud Headless | Headless |
+
+Firecrawl rows checked on 2026-11-21 against the [pricing page](https://www.firecrawl.dev/pricing) (prices "effective September 4, 2026", USD), the [firecrawl-mcp-server README](https://github.com/firecrawl/firecrawl-mcp-server) and the [MCP docs](https://docs.firecrawl.dev/mcp-server). Firecrawl also ships Firecrawl Local and a self-hosted server under AGPL-3.0 ([README](https://github.com/firecrawl/firecrawl)); the column above describes the cloud service.
 
 ---
 
@@ -49,9 +51,10 @@ Web crawling for Large Language Models (LLMs) is broken by default: modern web p
 - **Autonomous Mapping & Recursive Crawling:**
   - `map_website`: Inspects `/robots.txt`, sitemaps, and root anchors to discover all pages in a domain.
   - `crawl_website`: Breadth-first autonomous crawling with max depth, max pages, URL pattern filters (substring, `*` wildcard), and real-time token accounting.
+  - Both obey `robots.txt` `Disallow`/`Allow` rules for `User-agent: *` or `User-agent: lookacrawler` (a `lookacrawler` group replaces `*`). Skipped URLs come back in `skippedByRobots`, and `robots` reports `applied`, `none`, `unreachable` (5xx/timeout: nothing is fetched, per RFC 9309) or `ignored`. Fast mode also refuses a redirect into a disallowed path. Opt out with `--ignore-robots` / `ignore_robots: true`. A single-URL `extract` is a user request and does not read `robots.txt`.
 - **Pre-Crawl Browser Actions:** Automate clicks, scrolls, typing, and waits in Playwright before extracting content (dismiss cookie banners, scroll for infinite loading, expand accordions).
 - **Dual Hybrid Crawling Engine:**
-  - `fast`: Ultra-fast native HTTP GET with backoff. Escalates to `deep` when a page needs JavaScript to render.
+  - `fast`: Ultra-fast native HTTP GET with backoff. When an anti-bot page blocks it, the CLI retries in the stealth browser (`deep`); pass `--no-escalate` to stop that. The library and MCP server only escalate with `LOOKACRAWLER_AUTO_STEALTH=1`; otherwise the block is returned as an `anti_bot` failure.
   - `deep`: Headless Playwright engine launching real Google Chrome for pages that need JavaScript. Challenge pages (CAPTCHA, bot checks) are detected and reported instead of retried.
 - **Native MCP Ecosystem:**
   - **Tools:** `extract_web_content`, `crawl_website`, `map_website`, `batch_extract_web_content`, `extract_structured_data`, `extract_contacts`, `search_places`, `discover_local_leads`, `deep_enrich_lead`, `lint_anti_slop`, `lookup_social_profile`, `search_social_intent`, `audit_company_website`, `analyze_competitors`, `generate_growth_plan`, `gtm_pipeline_run`.

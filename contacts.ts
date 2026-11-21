@@ -1,6 +1,6 @@
 import { JSDOM } from "jsdom";
 import type { CountryCode } from "libphonenumber-js";
-import { fetchHtml } from "./extractor.js";
+import { fetchDocument } from "./extractor.js";
 import { validateTargetUrl } from "./security.js";
 import { normalizePhone, findPhones, type NormalizedPhone, type PhoneType } from "./quality/phone.js";
 import { cleanEmail, findEmails } from "./quality/email.js";
@@ -32,6 +32,21 @@ export interface ContactPhone {
   url: string;
 }
 
+/**
+ * Where one email or phone was seen. `value` is the string as it appears in
+ * the flat `emails` / `phones` (or `additionalPhones`) array, so callers can
+ * join on it; phones also carry `e164`.
+ */
+export interface ContactEvidence {
+  type: "email" | "phone";
+  value: string;
+  e164?: string;
+  /** Page the value was read from (a Maps place URL for Maps-supplied data). */
+  source_url: string;
+  /** ISO time the page was fetched. */
+  observed_at: string;
+}
+
 export interface ExtractedContacts {
   url: string;
   emails: string[];
@@ -44,6 +59,8 @@ export interface ExtractedContacts {
   phoneDetails?: ContactPhone[];
   /** DV-valid CNPJs printed on the site (unmasked), numeric or alphanumeric. */
   cnpjs?: string[];
+  /** One entry per email and phone above: source page and fetch time. */
+  evidence: ContactEvidence[];
 }
 
 export interface ExtractContactsOptions {
@@ -55,6 +72,8 @@ export interface ExtractContactsOptions {
   proxy?: string;
   /** Already-fetched HTML of `url`; skips the root fetch when provided. */
   html?: string;
+  /** When `html` was fetched (ISO). Without it, evidence from `html` is stamped with the call time. */
+  observedAt?: string;
   /** Region used to read numbers without a country code. Defaults to "BR". */
   defaultRegion?: CountryCode;
   /** Contact subpages to visit when deepScan is on. Defaults to 3. */
@@ -92,6 +111,7 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
     cookies,
     proxy,
     html,
+    observedAt,
     defaultRegion = "BR",
     maxSubpages = 3,
   } = options;
@@ -102,9 +122,19 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
 
   // 1. Fetch & scan root HTML
   try {
-    const rootHtml = html ?? (await fetchHtml(url, { timeoutMs, headers, cookies, proxy }));
+    let rootHtml = html;
+    let rootPage = parsedRoot.toString();
+    let rootObservedAt = observedAt ?? new Date().toISOString();
+    if (rootHtml === undefined) {
+      const doc = await fetchDocument(url, { timeoutMs, headers, cookies, proxy });
+      rootHtml = doc.text;
+      rootPage = doc.url ?? rootPage; // evidence names the page after redirects
+      rootObservedAt = new Date().toISOString();
+    }
+    // Links resolve against the requested URL as before: resolving them on a
+    // cross-origin redirect target would replay the caller's headers/cookies there.
     const root = parseContactsFromHtml(rootHtml, parsedRoot, { defaultRegion });
-    merged.add(root);
+    merged.add(root, rootPage, rootObservedAt);
 
     // 2. Visit the best-ranked contact subpages if deepScan is enabled
     if (deepScan) {
@@ -113,8 +143,10 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
         subpagesToVisit.map(async (subUrl) => {
           try {
             await validateTargetUrl(subUrl);
-            const subHtml = await fetchHtml(subUrl, { timeoutMs: 8000, headers, cookies, proxy });
-            return { subUrl, found: parseContactsFromHtml(subHtml, parsedRoot, { pageUrl: subUrl, defaultRegion }) };
+            const doc = await fetchDocument(subUrl, { timeoutMs: 8000, headers, cookies, proxy });
+            const pageUrl = doc.url ?? subUrl;
+            const observedAt = new Date().toISOString();
+            return { subUrl, pageUrl, observedAt, found: parseContactsFromHtml(doc.text, parsedRoot, { pageUrl: subUrl, defaultRegion }) };
           } catch {
             return null; /* ignore subpage failure */
           }
@@ -124,7 +156,7 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
       for (const page of pages) {
         if (!page) continue;
         merged.scanned.push(page.subUrl);
-        merged.add(page.found);
+        merged.add(page.found, page.pageUrl, page.observedAt);
       }
     }
   } catch (err: any) {
@@ -137,7 +169,10 @@ export async function extractContacts(options: ExtractContactsOptions): Promise<
 
 class ContactMerger {
   readonly scanned: string[];
-  private emails = new Set<string>();
+  /** Email -> first page it was seen on. */
+  private emails = new Map<string, { source_url: string; observed_at: string }>();
+  /** Page URL -> fetch time, for phone evidence (a phone keeps its own `url`). */
+  private observed = new Map<string, string>();
   private phones = new Map<string, ContactPhone>();
   private whatsapps = new Set<string>();
   private cnpjs = new Set<string>();
@@ -147,12 +182,19 @@ class ContactMerger {
     this.scanned = [url];
   }
 
-  add(page: PageContacts): void {
-    for (const e of page.emails) this.emails.add(e);
-    for (const p of page.phones) {
+  /** `pageUrl` is the page the values came from (after redirects); phones are re-stamped with it. */
+  add(page: PageContacts, pageUrl: string, observedAt: string): void {
+    for (const e of page.emails) {
+      if (!this.emails.has(e)) this.emails.set(e, { source_url: pageUrl, observed_at: observedAt });
+    }
+    for (const found of page.phones) {
+      const p = { ...found, url: pageUrl };
       const existing = this.phones.get(p.e164);
       // A tel: link is stronger evidence than a number read from text.
-      if (!existing || (existing.origin === "text" && p.origin === "tel")) this.phones.set(p.e164, p);
+      if (!existing || (existing.origin === "text" && p.origin === "tel")) {
+        this.phones.set(p.e164, p);
+        if (!this.observed.has(p.url)) this.observed.set(p.url, observedAt);
+      }
     }
     for (const w of page.whatsapps) this.whatsapps.add(w);
     for (const c of page.cnpjs) this.cnpjs.add(c);
@@ -166,15 +208,27 @@ class ContactMerger {
     for (const d of details) {
       if (this.whatsapps.has(d.e164.slice(1))) d.whatsapp = true;
     }
+    const emails = Array.from(this.emails.keys()).sort();
+    const evidence: ContactEvidence[] = [
+      ...emails.map((e) => ({ type: "email" as const, value: e, ...this.emails.get(e)! })),
+      ...details.map((d) => ({
+        type: "phone" as const,
+        value: d.formatted,
+        e164: d.e164,
+        source_url: d.url,
+        observed_at: this.observed.get(d.url)!,
+      })),
+    ];
     return {
       url: this.url,
-      emails: Array.from(this.emails).sort(),
+      emails,
       phones: details.map((d) => d.formatted),
       whatsapps: Array.from(this.whatsapps).sort(),
       socials: this.socials,
       contactPagesScanned: this.scanned,
       phoneDetails: details,
       cnpjs: Array.from(this.cnpjs),
+      evidence,
     };
   }
 }

@@ -1,7 +1,7 @@
-import { fetchRawHtml, processHtmlToMarkdown, type LinkFormat, type ImageMode } from "./extractor.js";
-import { getCachedPage, setCachedPage, buildCacheKey } from "./cache.js";
+import { autoStealthEnabled, fetchRawHtml, processHtmlToMarkdown, withEscalationHint, type LinkFormat, type ImageMode } from "./extractor.js";
+import { getCachedPageEntry, setCachedPage, buildCacheKey } from "./cache.js";
 import { validateTargetUrl } from "./security.js";
-import { extractContacts } from "./contacts.js";
+import { extractContacts, type ContactEvidence } from "./contacts.js";
 import type { GoogleMapsLead } from "./maps-bridge.js";
 import { countryToRegion, findPhones, normalizePhone } from "./quality/phone.js";
 import { cleanEmails, findEmails } from "./quality/email.js";
@@ -46,6 +46,25 @@ export interface EnrichedLeadResult {
   // Normalized details
   /** DV-valid CNPJs printed on the company site, unmasked. */
   cnpjFromSite?: string[];
+  /**
+   * One entry per value in `emails`, `additionalPhones` and `phone`: the page
+   * it was read from and when. Values the lead arrived with (Maps listing or
+   * caller input) point at the lead's Maps `link`, or "input" when it has
+   * none, and carry the time the enrichment received them.
+   */
+  evidence: ContactEvidence[];
+}
+
+/** Evidence for the emails and phone a lead arrived with (Maps listing or caller input). */
+export function mapsEvidence(
+  lead: { link?: string; phone?: string },
+  emails: string[],
+  observedAt: string
+): ContactEvidence[] {
+  const source_url = lead.link || "input";
+  const out: ContactEvidence[] = emails.map((value) => ({ type: "email", value, source_url, observed_at: observedAt }));
+  if (lead.phone) out.push({ type: "phone", value: lead.phone, source_url, observed_at: observedAt });
+  return out;
 }
 
 type EnrichOptions = {
@@ -57,7 +76,8 @@ type EnrichOptions = {
 
 /**
  * Fetch the raw home HTML once. Fast mode escalates to the browser when the
- * plain fetch is stopped by an anti-bot page, mirroring extractFast.
+ * plain fetch is stopped by an anti-bot page and LOOKACRAWLER_AUTO_STEALTH is
+ * on, mirroring extractFast.
  */
 async function fetchHomeHtml(url: string, mode: "fast" | "deep"): Promise<string> {
   try {
@@ -65,6 +85,7 @@ async function fetchHomeHtml(url: string, mode: "fast" | "deep"): Promise<string
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (mode === "fast" && /Anti-Bot protection|cloudflare|just a moment/i.test(message)) {
+      if (!autoStealthEnabled()) throw withEscalationHint(error);
       return fetchRawHtml(url, "deep", { maxRetries: 2 });
     }
     throw error;
@@ -144,6 +165,8 @@ export async function deepEnrichLead(
   const linkFormat = options.linkFormat || "references";
   const imageMode = options.imageMode || "alt_only";
   const crawlContactPages = options.crawlContactPages !== false;
+  const startedAt = new Date().toISOString();
+  const mapsEmails = cleanEmails(lead.emails || []);
 
   const result: EnrichedLeadResult = {
     title: lead.title,
@@ -158,7 +181,7 @@ export async function deepEnrichLead(
     longitude: lead.longitude,
     // Maps emails go through the same cleaning as site emails (lowercase,
     // placeholders, asset names) so "Contato@X.com" and "contato@x.com" merge.
-    emails: cleanEmails(lead.emails || []),
+    emails: mapsEmails,
     socialLinks: {},
     additionalPhones: [],
     decisionMakers: [],
@@ -167,6 +190,7 @@ export async function deepEnrichLead(
     sourcePagesCrawled: [],
     enrichmentSuccess: false,
     cnpjFromSite: [],
+    evidence: mapsEvidence(lead, mapsEmails, startedAt),
   };
 
   // The structured country from Maps decides how national numbers are read.
@@ -174,10 +198,12 @@ export async function deepEnrichLead(
 
   // Phones are deduplicated by E.164, starting with the Maps listing phone.
   const phoneKeys = new Set<string>();
-  const addPhone = (e164: string, formatted: string) => {
+  type Source = { source_url: string; observed_at: string };
+  const addPhone = (e164: string, formatted: string, src: Source) => {
     if (phoneKeys.has(e164)) return;
     phoneKeys.add(e164);
     result.additionalPhones.push(formatted);
+    result.evidence.push({ type: "phone", value: formatted, e164, source_url: src.source_url, observed_at: src.observed_at });
   };
 
   if (lead.phone) {
@@ -185,8 +211,12 @@ export async function deepEnrichLead(
     if (main && main.valid) phoneKeys.add(main.e164);
   }
 
-  const addEmails = (emails: Iterable<string>) => {
-    for (const em of cleanEmails(emails)) if (!result.emails.includes(em)) result.emails.push(em);
+  const addEmails = (emails: Iterable<string>, src: Source) => {
+    for (const em of cleanEmails(emails)) {
+      if (result.emails.includes(em)) continue;
+      result.emails.push(em);
+      result.evidence.push({ type: "email", value: em, source_url: src.source_url, observed_at: src.observed_at });
+    }
   };
 
   if (!lead.web_site || !lead.web_site.startsWith("http")) {
@@ -214,15 +244,21 @@ export async function deepEnrichLead(
       linkFormat,
       imageMode,
     });
-    let homeMarkdown = getCachedPage(cacheKey);
+    const cached = getCachedPageEntry(cacheKey);
+    let homeMarkdown = cached?.content ?? null;
+    // Values read from the markdown are as old as the markdown.
+    let markdownObservedAt = cached ? new Date(cached.timestamp).toISOString() : startedAt;
 
     // Raw html feeds contact extraction (and the markdown on a cache miss).
     // On a deep-mode cache hit skip the browser: extractContacts fetches the
     // home page itself with a plain request.
     let rawHtml: string | undefined;
+    let homeFetchedAt: string | undefined;
     if (!homeMarkdown || mode === "fast") {
       try {
         rawHtml = await fetchHomeHtml(lead.web_site, mode);
+        homeFetchedAt = new Date().toISOString();
+        if (!homeMarkdown) markdownObservedAt = homeFetchedAt;
       } catch (fetchErr) {
         // With cached markdown we can still summarize; without it there is nothing to enrich.
         if (!homeMarkdown) throw fetchErr;
@@ -252,6 +288,7 @@ export async function deepEnrichLead(
       contacts = await extractContacts({
         url: lead.web_site,
         html: rawHtml,
+        observedAt: homeFetchedAt,
         deepScan: crawlContactPages,
         defaultRegion: region,
       });
@@ -260,14 +297,14 @@ export async function deepEnrichLead(
     }
 
     if (contacts) {
-      addEmails(contacts.emails);
+      for (const ev of contacts.evidence) if (ev.type === "email") addEmails([ev.value], ev);
       const { instagram, linkedin, facebook, youtube, twitter } = contacts.socials;
       result.socialLinks.instagram = instagram;
       result.socialLinks.linkedin = linkedin;
       result.socialLinks.facebook = facebook;
       result.socialLinks.youtube = youtube;
       result.socialLinks.twitter = twitter;
-      for (const p of contacts.phoneDetails || []) addPhone(p.e164, p.formatted);
+      for (const ev of contacts.evidence) if (ev.type === "phone" && ev.e164) addPhone(ev.e164, ev.value, ev);
       for (const page of contacts.contactPagesScanned) {
         if (!result.sourcePagesCrawled.includes(page)) result.sourcePagesCrawled.push(page);
       }
@@ -279,7 +316,8 @@ export async function deepEnrichLead(
 
     // 3. Markdown scan as a fallback for pages whose contact data survived
     //    pruning, or when only the cached markdown is available.
-    addEmails(findEmails(homeMarkdown));
+    const homeSource: Source = { source_url: lead.web_site, observed_at: markdownObservedAt };
+    addEmails(findEmails(homeMarkdown), homeSource);
 
     // 4. Extract social links
     const socialMatches = homeMarkdown.match(/https?:\/\/(?:www\.)?(instagram|linkedin|facebook|youtube|twitter|x)\.com\/[a-zA-Z0-9._-]+/gi) || [];
@@ -301,7 +339,7 @@ export async function deepEnrichLead(
     // 5. Phones still in the markdown, deduplicated by E.164 against Maps and
     //    the html scan. The phone module rejects CPF/CNPJ/CEP/ids.
     for (const p of findPhones(homeMarkdown, { defaultRegion: region })) {
-      addPhone(p.e164, p.country === region ? p.national : p.international);
+      addPhone(p.e164, p.country === region ? p.national : p.international, homeSource);
     }
 
     // 6. Contact page fallback, only when extractContacts could not run its
@@ -313,9 +351,10 @@ export async function deepEnrichLead(
         try {
           await validateTargetUrl(contactUrl);
           const contactHtml = await fetchRawHtml(contactUrl, "fast", { maxRetries: 1 });
+          const contactSource: Source = { source_url: contactUrl, observed_at: new Date().toISOString() };
           result.sourcePagesCrawled.push(contactUrl);
           const contactMd = processHtmlToMarkdown(contactHtml, { url: contactUrl, linkFormat, imageMode });
-          addEmails(findEmails(contactMd));
+          addEmails(findEmails(contactMd), contactSource);
         } catch {
           /* non-critical contact page crawl failure */
         }

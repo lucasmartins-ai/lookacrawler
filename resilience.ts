@@ -268,7 +268,9 @@ export async function retryWithBackoff<T>(
             message.includes("Anti-Bot protection") || message.includes("Only HTTP/HTTPS") ||
             message.includes("private or local hosts") || message.includes("selector") ||
             // Same bytes, same parse result: retrying only repeats the expensive work.
-            message.includes("PDF could not be parsed")) {
+            message.includes("PDF could not be parsed") ||
+            // A robots.txt veto does not change between attempts.
+            message.includes("disallowed by robots.txt")) {
           throw error;
         }
       }

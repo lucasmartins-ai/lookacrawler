@@ -2,6 +2,7 @@ import { JSDOM } from "jsdom";
 import { extractFast, extractDeep, type LinkFormat, type ImageMode } from "./extractor.js";
 import { validateTargetUrl } from "./security.js";
 import { fetchHtml } from "./extractor.js";
+import { loadRobots, type RobotsState } from "./robots.js";
 
 export interface DiscoveredUrl {
   url: string;
@@ -16,6 +17,8 @@ export interface MapWebsiteOptions {
   includePatterns?: string[];
   excludePatterns?: string[];
   timeoutMs?: number;
+  /** Skip robots.txt Disallow/Allow rules (default: respected). */
+  ignoreRobots?: boolean;
 }
 
 export interface MapWebsiteResult {
@@ -23,6 +26,10 @@ export interface MapWebsiteResult {
   sitemapsFound: string[];
   totalDiscovered: number;
   urls: DiscoveredUrl[];
+  /** "applied", "none" (no robots.txt), "unreachable" (5xx/timeout: nothing allowed) or "ignored". */
+  robots: RobotsState;
+  /** Discovered URLs left out because robots.txt disallows them. */
+  skippedByRobots: string[];
 }
 
 export interface CrawlWebsiteOptions {
@@ -40,6 +47,8 @@ export interface CrawlWebsiteOptions {
   cookies?: Record<string, string>;
   proxy?: string;
   timeoutMs?: number;
+  /** Skip robots.txt Disallow/Allow rules (default: respected). */
+  ignoreRobots?: boolean;
 }
 
 export interface CrawledPage {
@@ -56,6 +65,9 @@ export interface CrawlWebsiteResult {
   totalPagesCrawled: number;
   totalEstimatedTokens: number;
   pages: CrawledPage[];
+  robots: RobotsState;
+  /** Links (and possibly the start URL) not fetched because robots.txt disallows them. */
+  skippedByRobots: string[];
 }
 
 const MAX_URL_PATTERNS = 10;
@@ -118,23 +130,23 @@ export async function mapWebsite(options: MapWebsiteOptions): Promise<MapWebsite
   const sitemapsFound: string[] = [];
   const discoveredMap = new Map<string, DiscoveredUrl>();
 
-  const isUrlAllowed = makeUrlFilter(parsedStart.hostname, includePatterns, excludePatterns);
+  const passesFilter = makeUrlFilter(parsedStart.hostname, includePatterns, excludePatterns);
+  const skippedByRobots = new Set<string>();
 
-  // 1. Inspect robots.txt for declared sitemaps
-  try {
-    const robotsUrl = `${origin}/robots.txt`;
-    const robotsTxt = await fetchHtml(robotsUrl, { timeoutMs: 5000 });
-    const sitemapRegex = /Sitemap:\s*(https?:\/\/[^\s\r\n]+)/gi;
-    let match: RegExpExecArray | null;
-    while ((match = sitemapRegex.exec(robotsTxt)) !== null) {
-      const sitemapUrl = match[1].trim();
-      if (!sitemapsFound.includes(sitemapUrl)) {
-        sitemapsFound.push(sitemapUrl);
-      }
+  // 1. robots.txt: declared sitemaps and the Disallow/Allow rules, one fetch.
+  //    Sitemaps are read even with --ignore-robots: they are a URL source.
+  const robots = await loadRobots(origin);
+  sitemapsFound.push(...robots.sitemaps);
+  const obeyRobots = !options.ignoreRobots;
+  const isUrlAllowed = (candidate: string): boolean => {
+    if (!passesFilter(candidate)) return false;
+    if (obeyRobots && !robots.isAllowed(candidate)) {
+      if (skippedByRobots.size < maxLimit) skippedByRobots.add(candidate);
+      return false;
     }
-  } catch {
-    /* robots.txt unavailable or blocked */
-  }
+    return true;
+  };
+  const allowRedirect = obeyRobots ? robots.isAllowed : undefined;
 
   // Fallback to default sitemap.xml if none detected
   if (sitemapsFound.length === 0) {
@@ -144,9 +156,11 @@ export async function mapWebsite(options: MapWebsiteOptions): Promise<MapWebsite
   // 2. Fetch and parse sitemaps
   for (const sitemapUrl of sitemapsFound) {
     if (discoveredMap.size >= maxLimit) break;
+    // Covers the /sitemap.xml fallback when robots.txt disallows it or was unreachable.
+    if (obeyRobots && !robots.isAllowed(sitemapUrl)) continue;
     try {
       await validateTargetUrl(sitemapUrl);
-      const xmlContent = await fetchHtml(sitemapUrl, { timeoutMs });
+      const xmlContent = await fetchHtml(sitemapUrl, { timeoutMs, allowRedirect });
       const locRegex = /<loc>\s*(https?:\/\/[^<\s]+)\s*<\/loc>/gi;
       const lastmodRegex = /<lastmod>\s*([^<\s]+)\s*<\/lastmod>/i;
 
@@ -175,9 +189,11 @@ export async function mapWebsite(options: MapWebsiteOptions): Promise<MapWebsite
   }
 
   // 3. If sitemaps yielded few links, parse links from root HTML page
-  if (discoveredMap.size < 10) {
+  const homeAllowed = !obeyRobots || robots.isAllowed(url);
+  if (!homeAllowed) skippedByRobots.add(url);
+  if (discoveredMap.size < 10 && homeAllowed) {
     try {
-      const homeHtml = await fetchHtml(url, { timeoutMs });
+      const homeHtml = await fetchHtml(url, { timeoutMs, allowRedirect });
       const dom = new JSDOM(homeHtml, { url });
       const anchors = Array.from(dom.window.document.querySelectorAll("a[href]"));
 
@@ -202,8 +218,10 @@ export async function mapWebsite(options: MapWebsiteOptions): Promise<MapWebsite
           /* ignore unparseable links */
         }
       }
-    } catch {
-      /* home page fetch failed */
+    } catch (err) {
+      // A redirect into a disallowed path is a robots skip, not a silent failure.
+      const veto = /^Redirect to (\S+) is disallowed by robots\.txt/.exec(err instanceof Error ? err.message : "");
+      if (veto) skippedByRobots.add(veto[1]);
     }
   }
 
@@ -214,6 +232,8 @@ export async function mapWebsite(options: MapWebsiteOptions): Promise<MapWebsite
     sitemapsFound,
     totalDiscovered: urls.length,
     urls,
+    robots: obeyRobots ? robots.state : "ignored",
+    skippedByRobots: Array.from(skippedByRobots),
   };
 }
 
@@ -259,16 +279,32 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
     cookies,
     proxy,
     timeoutMs = 15000,
+    ignoreRobots = false,
   } = options;
 
   await validateTargetUrl(startUrl);
   const targetHost = new URL(startUrl).hostname;
 
-  const isUrlAllowed = makeUrlFilter(targetHost, includePatterns, excludePatterns);
+  const passesFilter = makeUrlFilter(targetHost, includePatterns, excludePatterns);
+  const robots = await loadRobots(new URL(startUrl).origin, { ignore: ignoreRobots, headers, cookies, proxy });
+  // Fast mode checks each redirect hop too; deep mode's browser follows redirects on its own.
+  const allowRedirect = ignoreRobots ? undefined : robots.isAllowed;
+  const skippedByRobots = new Set<string>();
+  const isUrlAllowed = (candidate: string): boolean => {
+    if (!passesFilter(candidate)) return false;
+    if (!robots.isAllowed(candidate)) {
+      skippedByRobots.add(candidate);
+      return false;
+    }
+    return true;
+  };
 
-  const queue: Array<{ url: string; depth: number }> = [{ url: startUrl, depth: 0 }];
+  const queue: Array<{ url: string; depth: number }> = [];
   const visited = new Set<string>([startUrl]);
   const pages: CrawledPage[] = [];
+  // The start URL is the caller's choice, so only robots (not the include/exclude filters) can veto it.
+  if (robots.isAllowed(startUrl)) queue.push({ url: startUrl, depth: 0 });
+  else skippedByRobots.add(startUrl);
 
   const crawlPage = async ({ url: currentUrl, depth }: { url: string; depth: number }): Promise<void> => {
     try {
@@ -292,6 +328,7 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
           proxy,
           linkFormat,
           imageMode,
+          allowRedirect,
         });
       }
 
@@ -318,7 +355,7 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
           if (hrefs.length === 0 && linkFormat === "strip") {
             // `strip` removes URLs by design; the page may still be worth
             // one extra fetch if it has no other way to expose its links.
-            const html = await fetchHtml(currentUrl, { timeoutMs: 5000, headers, cookies, proxy });
+            const html = await fetchHtml(currentUrl, { timeoutMs: 5000, headers, cookies, proxy, allowRedirect });
             const dom = new JSDOM(html, { url: currentUrl });
             hrefs = Array.from(dom.window.document.querySelectorAll("a[href]"))
               .map((a) => a.getAttribute("href") || "");
@@ -381,5 +418,7 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
     totalPagesCrawled: pages.length,
     totalEstimatedTokens,
     pages,
+    robots: robots.state,
+    skippedByRobots: Array.from(skippedByRobots),
   };
 }

@@ -44,6 +44,8 @@ export interface FastExtractOptions {
   maxRetries?: number;
   linkFormat?: LinkFormat;
   imageMode?: ImageMode;
+  /** Veto a redirect hop before it is fetched (crawl passes its robots.txt check). */
+  allowRedirect?: (url: string) => boolean;
 }
 
 export interface DeepExtractOptions {
@@ -63,7 +65,8 @@ const fastInFlight = new Map<string, Promise<string>>();
 const deepInFlight = new Map<string, Promise<string>>();
 
 function requestKey(options: FastExtractOptions | DeepExtractOptions): string {
-  return JSON.stringify(options);
+  // JSON drops functions: a robots-guarded request must not share an unguarded one's result.
+  return JSON.stringify({ ...options, allowRedirect: "allowRedirect" in options && options.allowRedirect ? "guarded" : undefined });
 }
 
 /**
@@ -146,6 +149,8 @@ export interface FetchedDocument {
   text: string;
   bytes: Buffer;
   contentType: string;
+  /** URL after redirects: the page the text actually came from (always set by fetchDocument). */
+  url?: string;
 }
 
 const PLAIN_TEXT_TYPES = new Set(["text/plain", "text/markdown", "text/x-markdown"]);
@@ -261,6 +266,14 @@ type FetchOptions = {
   headers?: Record<string, string>;
   cookies?: Record<string, string>;
   proxy?: string;
+  /** Veto a redirect hop before it is fetched (crawl passes its robots.txt check). */
+  allowRedirect?: (url: string) => boolean;
+  /**
+   * Scan the body for challenge-page text (default true). robots.txt turns it
+   * off: a comment mentioning "cf-turnstile" is not a bot wall, and a 502 must
+   * stay a 502 instead of becoming a status-less anti-bot error.
+   */
+  scanChallenge?: boolean;
 };
 
 /**
@@ -337,6 +350,9 @@ export async function fetchDocument(url: string, options: FetchOptions = {}): Pr
       if (!location || redirect === 5) throw new Error(`HTTP ${response.status}: redirect limit exceeded`);
       await response.body?.cancel().catch(() => {});
       const nextUrl = new URL(location, currentUrl).toString();
+      if (options.allowRedirect && !options.allowRedirect(nextUrl)) {
+        throw new Error(`Redirect to ${nextUrl} is disallowed by robots.txt`);
+      }
       await validateTargetUrl(nextUrl).catch((err) => {
         // The lead's own domain answered; a redirect to a dead host is not a dead lead.
         if (classifyFailure(err) !== "dead_domain") throw err;
@@ -365,7 +381,7 @@ export async function fetchDocument(url: string, options: FetchOptions = {}): Pr
     // ponytail: PDFs skip charset decoding and the anti-bot text scan; their bytes are not markup.
     const htmlText = isPdf ? "" : decodeHtml(bytes, contentType);
 
-    const antiBotCheck: AntiBotCheckResult = detectAntiBot(response.status, htmlText);
+    const antiBotCheck: AntiBotCheckResult = detectAntiBot(response.status, options.scanChallenge === false ? "" : htmlText);
     if (antiBotCheck.isBlocked) {
       throw new Error(`Anti-Bot protection triggered: ${antiBotCheck.reason}`);
     }
@@ -374,7 +390,7 @@ export async function fetchDocument(url: string, options: FetchOptions = {}): Pr
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    return { text: htmlText, bytes, contentType };
+    return { text: htmlText, bytes, contentType, url: currentUrl };
   } catch (error: any) {
     if (error.name === "AbortError") {
       throw new Error(`Request timed out after ${timeoutMs}ms`);
@@ -630,6 +646,24 @@ function renderDocument(
 }
 
 /**
+ * Whether a fast fetch stopped by an anti-bot page may be retried in the
+ * stealth browser. Off unless LOOKACRAWLER_AUTO_STEALTH is "1"/"true": getting
+ * past a bot wall is the caller's decision. The CLI turns it on (see cli.ts).
+ * Read at call time so tests and long-lived processes can flip it.
+ */
+export function autoStealthEnabled(): boolean {
+  return /^(1|true)$/i.test(process.env.LOOKACRAWLER_AUTO_STEALTH ?? "");
+}
+
+/** Message on an anti-bot failure that was not escalated, so callers know the switch. */
+export function withEscalationHint(error: unknown): Error {
+  let message = error instanceof Error ? error.message : String(error);
+  // "HTTP 401: Just a moment" must still classify as anti_bot, not http_error.
+  if (!/Anti-Bot protection/i.test(message)) message = `Anti-Bot protection triggered: ${message}`;
+  return new Error(`${message} (not retried in the stealth browser; set LOOKACRAWLER_AUTO_STEALTH=1 or use mode "deep")`);
+}
+
+/**
  * Execute Fast Extraction pipeline with retries:
  * Native Fetch -> Shared Token-Optimization Pipeline
  */
@@ -643,14 +677,14 @@ export function extractFast(options: FastExtractOptions): Promise<string> {
 }
 
 async function extractFastOnce(options: FastExtractOptions): Promise<string> {
-  const { url, cssSelector, timeoutMs, headers, cookies, proxy, maxRetries = 3, linkFormat, imageMode } = options;
+  const { url, cssSelector, timeoutMs, headers, cookies, proxy, maxRetries = 3, linkFormat, imageMode, allowRedirect } = options;
 
   recordMetric("requests");
   const startedAt = Date.now();
   try {
     const result = await retryWithBackoff(
     async () => {
-      const doc = await fetchDocument(url, { timeoutMs, headers, cookies, proxy });
+      const doc = await fetchDocument(url, { timeoutMs, headers, cookies, proxy, allowRedirect });
       return documentToMarkdown(doc, { url, cssSelector, linkFormat, imageMode });
     },
     { maxRetries }
@@ -664,7 +698,14 @@ async function extractFastOnce(options: FastExtractOptions): Promise<string> {
     // (and similar) stop it. A real browser (or a robust proxy) is more likely
     // to pass — without this, the default `fast` path silently returns 0 bytes.
     const message = error instanceof Error ? error.message : String(error);
-    const antiBot = /Anti-Bot protection/i.test(message) || /cloudflare/i.test(message) || /just a moment/i.test(message);
+    // A robots.txt veto names the redirect URL, which may contain "cloudflare": never escalate it.
+    const robotsVeto = message.includes("disallowed by robots.txt");
+    const antiBot = !robotsVeto && (/Anti-Bot protection/i.test(message) || /cloudflare/i.test(message) || /just a moment/i.test(message));
+    if (antiBot && !autoStealthEnabled()) {
+      recordMetric("failures");
+      recordMetric("durationMs", Date.now() - startedAt);
+      throw withEscalationHint(error);
+    }
     if (antiBot) {
       recordMetric("escalations");
       console.error(`[lookacrawler] fast blocked by anti-bot (${message.slice(0, 90)}); escalating to deep/stealth...`);

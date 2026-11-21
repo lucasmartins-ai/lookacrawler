@@ -121,12 +121,17 @@ interface PageRecord {
  * @returns Cached content string if valid, null if not found, expired or the cache is unavailable
  */
 export function getCachedPage(url: string): string | null {
+  return getCachedPageEntry(url)?.content ?? null;
+}
+
+/** Same as getCachedPage, with the time (ms) the content was stored. */
+export function getCachedPageEntry(url: string): { content: string; timestamp: number } | null {
   return safe((d) => {
     const row = d
       .query<PageRecord, [string]>("SELECT url, content, timestamp FROM pages WHERE url = ?")
       .get(url);
     if (!row) return null;
-    if (Date.now() - row.timestamp < TTL_MS) return row.content;
+    if (Date.now() - row.timestamp < TTL_MS) return { content: row.content, timestamp: row.timestamp };
     d.query("DELETE FROM pages WHERE url = ?").run(url);
     return null;
   }, null);

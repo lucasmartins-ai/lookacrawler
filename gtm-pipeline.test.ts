@@ -48,7 +48,7 @@ describe("gtm pipeline (offline)", () => {
   });
 
   test("an English-speaking lead gets an English draft; --offer is used verbatim", () => {
-    const lead = { title: "Bright Smile", emails: ["hi@bright.example"], socialLinks: {}, additionalPhones: [], decisionMakers: [], markdownSummary: "", estimatedTokens: 0, sourcePagesCrawled: [], enrichmentSuccess: true };
+    const lead = { title: "Bright Smile", emails: ["hi@bright.example"], socialLinks: {}, additionalPhones: [], decisionMakers: [], markdownSummary: "", estimatedTokens: 0, sourcePagesCrawled: [], enrichmentSuccess: true, evidence: [] };
     const d = draftOutreach(lead, { title: "Bright Smile", complete_address: { country: "GB", city: "Bristol" } }, { niche: "dentist", offer: "review-request texts" });
     expect(d.locale).toBe("en");
     expect(d.copy).toContain("Bright Smile in Bristol");
