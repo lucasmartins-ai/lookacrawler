@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The fast extraction path (`extract`, `batch`, the Markdown of `structured`,
+  `extractMetadata`) no longer loads jsdom. HTML is parsed by parse5 (the
+  parser jsdom uses) and read through linkedom, and the unpruned fallback
+  re-parses instead of cloning every document. `extractor.ts` no longer
+  re-exports `mapWebsite`/`crawlWebsite` (import them from `crawler.ts`), which
+  had pulled jsdom in through `crawler.ts`. Markdown and metadata are
+  byte-identical to the jsdom output on 21 public pages in 9 link/image modes.
+  A `css_selector` with a pseudo-element (`div::before`) now fails instead of
+  being ignored, and an invalid selector throws `Error` instead of
+  `SyntaxError`. jsdom stays for contacts, crawl link discovery, competitor
+  audit and `structured` schema selectors.
+
 - `crawl` and `map` (CLI and MCP) now obey `robots.txt` `Disallow`/`Allow`
   rules for `User-agent: *` and `User-agent: lookacrawler` (a specific group
   replaces `*`; longest match wins, `Allow` wins ties; `*` and `$` wildcards).

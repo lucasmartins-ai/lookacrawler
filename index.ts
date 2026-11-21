@@ -401,7 +401,7 @@ Returns a list of URLs with source and modification metadata. Useful for explori
     },
     async ({ url, max_links, ignore_robots }) => {
       try {
-        const { mapWebsite } = await loadExtractor();
+        const { mapWebsite } = await import("./crawler.js");
         const result = await mapWebsite({ url, maxLinks: max_links, ignoreRobots: ignore_robots });
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -436,7 +436,7 @@ Returns a list of URLs with source and modification metadata. Useful for explori
     },
     async ({ start_url, max_depth, max_pages, include_patterns, exclude_patterns, mode, link_format, image_mode, ignore_robots }) => {
       try {
-        const { crawlWebsite } = await loadExtractor();
+        const { crawlWebsite } = await import("./crawler.js");
         const result = await crawlWebsite({
           startUrl: start_url,
           maxDepth: max_depth,

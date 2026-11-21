@@ -54,7 +54,7 @@ The system's core design pillar is **Token Economy**: minimizing prompt overhead
 |  2. CSS Targeting (Optional):                                                     |
 |     Scope DOM exclusively to elements matching `css_selector`.                     |
 |                                                                                   |
-|  3. Readability Processing (@mozilla/readability + JSDOM):                        |
+|  3. Readability Processing (@mozilla/readability + parse5/linkedom):              |
 |     Extract main article body text and meaningful structural content.             |
 |                                                                                   |
 |  4. Turndown Markdown Conversion:                                                 |
