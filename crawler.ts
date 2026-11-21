@@ -287,7 +287,7 @@ export async function crawlWebsite(options: CrawlWebsiteOptions): Promise<CrawlW
   const startOrigin = new URL(startUrl).origin;
 
   const passesFilter = makeUrlFilter(targetHost, includePatterns, excludePatterns);
-  const robots = await loadRobots(new URL(startUrl).origin, { ignore: ignoreRobots, headers, cookies, proxy });
+  const robots = await loadRobots(startOrigin, { ignore: ignoreRobots, headers: options.headers, cookies: options.cookies, proxy });
   // Fast mode checks each redirect hop too; deep mode's browser follows redirects on its own.
   const allowRedirect = ignoreRobots ? undefined : robots.isAllowed;
   const skippedByRobots = new Set<string>();

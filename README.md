@@ -245,15 +245,15 @@ Only what lookacrawler can honour is accepted; anything else gets a `400` that
 names the field, never a silent no-op:
 
 - Formats: `markdown` and `links`. No screenshots, HTML, JSON extraction or summaries.
-- `proxy`: `basic`/`auto` fetch over HTTP (`auto` already escalates to the browser
-  on anti-bot pages); `stealth`/`enhanced`, `waitFor` and `actions` (`wait`,
+- `proxy`: `basic`/`auto` fetch over HTTP (`auto` escalates to the browser on an
+  anti-bot page when `LOOKACRAWLER_AUTO_STEALTH=1`); `stealth`/`enhanced`, `waitFor` and `actions` (`wait`,
   `click`, `scroll`) use the browser.
 - Map covers one host (`includeSubdomains: false`), sitemap plus home-page links;
   `search` ranks matching URLs first; `limit` up to 5,000.
 - Crawl `limit` up to 100 pages, `maxDiscoveryDepth` up to 5, at most 2 crawls
   running. `includePaths`/`excludePaths` are plain path substrings; regex syntax
-  and quantifiers (`*`, `+`, `?`) get a 400. robots.txt is not read yet, so every
-  crawl must send `"ignoreRobotsTxt": true`. `headers` go only to the start
+  and quantifiers (`*`, `+`, `?`) get a 400. Crawls obey robots.txt unless
+  `ignoreRobotsTxt` is `true`. `headers` go only to the start
   origin. Finished jobs live in memory for an hour, within a 200 MB budget.
 - `timeout` bounds the whole scrape or map (`408` when it runs out).
   `metadata.statusCode` is always `200`. Fast mode turns an HTTP 4xx/5xx into an

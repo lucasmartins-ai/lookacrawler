@@ -167,7 +167,7 @@ function parseScrapeOptions(body: Body, where: string, allowBrowserSteps: boolea
   }
   if (allowBrowserSteps && body.actions != null) actions.push(...parseActions(body.actions));
   if (actions.length > 20) throw bad(`${where}: "waitFor" plus "actions" make more than 20 browser steps`);
-  // "auto" is what fast already does: escalate to the browser when anti-bot blocks it.
+  // "auto" is fast mode, which escalates to the browser on an anti-bot block only when LOOKACRAWLER_AUTO_STEALTH=1.
   // Firecrawl's proxy is a tier name, never a proxy URL, so it never reaches our proxy option.
   const browser = body.proxy === "stealth" || body.proxy === "enhanced" || actions.length > 0;
   return {
@@ -264,16 +264,11 @@ async function startCrawl(body: Body, deps: V2Deps, baseUrl: string) {
       excludePaths: (v) => Array.isArray(v) && v.every(isString),
       maxConcurrency: intIn(1, 10),
       scrapeOptions: (v) => !!v && typeof v === "object" && !Array.isArray(v),
-      ignoreRobotsTxt: is(true),
+      ignoreRobotsTxt: isBool,
     },
     CRAWL_NOOPS,
     "crawl"
   );
-  // robots.txt is not read yet, and Firecrawl's default is to obey it, so the
-  // caller has to opt out explicitly rather than get a crawl that ignores it.
-  if (body.ignoreRobotsTxt !== true) {
-    throw bad('crawl: lookacrawler does not read robots.txt yet; send "ignoreRobotsTxt": true to crawl anyway');
-  }
   const plan = parseScrapeOptions((body.scrapeOptions as Body) ?? {}, "crawl.scrapeOptions", false);
   const includePatterns = (body.includePaths as string[] | undefined) ?? [];
   const excludePatterns = (body.excludePaths as string[] | undefined) ?? [];
@@ -309,6 +304,7 @@ async function startCrawl(body: Body, deps: V2Deps, baseUrl: string) {
       headers: plan.request.headers,
       timeoutMs: plan.request.timeoutMs,
       linkFormat: "inline",
+      ignoreRobots: body.ignoreRobotsTxt === true,
     })
     .then(
       (result) => {
@@ -316,7 +312,8 @@ async function startCrawl(body: Body, deps: V2Deps, baseUrl: string) {
         const bytes = result.pages.reduce((sum, p) => sum + 2 * p.markdown.length, 0);
         const firstError = result.pages.find((p) => p.error)?.error;
         if (!result.pages.some((p) => !p.error)) {
-          Object.assign(job, { status: "failed", error: firstError || "No page could be scraped" });
+          const vetoed = result.skippedByRobots.includes(url);
+          Object.assign(job, { status: "failed", error: firstError || (vetoed ? "robots.txt disallows the start URL" : "No page could be scraped") });
         } else if (storedBytes() + bytes > MAX_STORED_BYTES) {
           Object.assign(job, { status: "failed", error: `Crawl output (${Math.round(bytes / 1e6)} MB) is over the memory budget; lower "limit"` });
         } else {

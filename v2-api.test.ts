@@ -20,6 +20,8 @@ const deps: V2Deps = {
       host: "acme.example",
       sitemapsFound: [],
       totalDiscovered: 3,
+      robots: "applied" as const,
+      skippedByRobots: [],
       urls: [
         { url: "https://acme.example/", source: "sitemap" },
         { url: "https://acme.example/?utm=x", source: "sitemap" },
@@ -34,6 +36,8 @@ const deps: V2Deps = {
       startUrl: opts.startUrl!,
       totalPagesCrawled: 2,
       totalEstimatedTokens: 10,
+      robots: "applied" as const,
+      skippedByRobots: [],
       pages: crawlPages ?? [
         { url: "https://acme.example/", depth: 0, markdown: "# Home", charCount: 6, estimatedTokens: 2 },
         { url: "https://acme.example/x", depth: 1, markdown: "", charCount: 0, estimatedTokens: 0, error: "boom" },
@@ -151,7 +155,9 @@ describe("/v2/crawl", () => {
     const { success, id, url } = await start.json();
     expect(success).toBe(true);
     expect(url).toBe(`${base}/v2/crawl/${id}`);
-    expect(crawlCalls[0]).toMatchObject({ startUrl: "https://acme.example/", maxPages: 5, includePatterns: ["/docs/"] });
+    expect(crawlCalls[0]).toMatchObject({ startUrl: "https://acme.example/", maxPages: 5, includePatterns: ["/docs/"], ignoreRobots: true });
+    await post("/v2/crawl", { url: "https://acme.example/" });
+    expect(crawlCalls[1].ignoreRobots).toBe(false);
 
     const running = await (await fetch(url)).json();
     expect(running.status).toBe("scraping");
@@ -164,14 +170,11 @@ describe("/v2/crawl", () => {
   });
 
   it("turns Firecrawl regex paths and unsupported options into a 400", async () => {
-    const robots = await post("/v2/crawl", { url: "https://acme.example/" });
-    expect(robots.status).toBe(400);
-    expect((await robots.json()).error).toContain("robots.txt");
     const crawl = (extra: object) => post("/v2/crawl", { url: "https://acme.example/", ignoreRobotsTxt: true, ...extra });
     expect((await crawl({ includePaths: ["^/blog/.*$"] })).status).toBe(400);
     expect((await crawl({ includePaths: ["/docs/v.+"] })).status).toBe(400);
     expect((await post("/v2/crawl", { url: "https://acme.example/", limit: 10_000 })).status).toBe(400);
-    expect((await post("/v2/crawl", { url: "https://acme.example/", ignoreRobotsTxt: false })).status).toBe(400);
+    expect((await post("/v2/crawl", { url: "https://acme.example/", ignoreRobotsTxt: "no" })).status).toBe(400);
     expect((await post("/v2/crawl", { url: "https://acme.example/", scrapeOptions: { actions: [] } })).status).toBe(400);
     expect(crawlCalls).toHaveLength(0);
   });

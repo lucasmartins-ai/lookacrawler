@@ -51,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pointed at `http://127.0.0.1:<port>` works unchanged (checked with the
   `firecrawl` JS SDK 4.52.0). Same bearer token, Origin/Host checks and egress
   guard as the MCP endpoints. Fields lookacrawler cannot honour (screenshots,
-  subdomains, regex paths, geo location, robots.txt compliance) get a `400`
+  subdomains, regex paths, geo location) get a `400`
   naming the field instead of being ignored. Code in `v2-api.ts`.
 - `bench/icp-benchmark.ts`: homepage-scrape benchmark through any Firecrawl
   v2-compatible endpoint, so lookacrawler and firecrawl-local are measured the
