@@ -1,4 +1,4 @@
-import { JSDOM } from "jsdom";
+import { parseHTML } from "linkedom";
 import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
 // @ts-ignore - plugin lacks official types
@@ -508,9 +508,54 @@ function pruneHighLinkDensityElements(document: Document): void {
   }
 }
 
+/** Below this, a pruned result is treated as "the heuristic may have eaten the page". */
+const MIN_USEFUL_MARKDOWN_CHARS = 200;
+
+// parse5 is ESM-only and jsdom require()s it. A static import here put it on
+// Bun's async ESM path, and jsdom's require() of it then threw in any module
+// graph that loads both (contacts, crawler, competitor-intelligence). Loading
+// it with require() too keeps one synchronous instance for both.
+const { parse: parseHtml5, serialize: serializeHtml5 } = require("parse5") as typeof import("parse5");
+
+/**
+ * A jsdom-shaped document without jsdom: the Markdown and metadata paths only
+ * need a tree for Readability, not a browser environment, and loading jsdom
+ * alone cost more memory than parsing most pages.
+ *
+ * linkedom alone is not enough: its parser (htmlparser2) skips HTML5 tree
+ * construction, so a page without <html>/<body> came out empty and tables lost
+ * their implied <tbody>. parse5 (the parser jsdom uses, same options) builds the
+ * spec tree first; its well-formed serialization is what linkedom then parses.
+ */
+function parseLightDocument(html: string, url: string): Document {
+  const { document } = parseHTML(serializeHtml5(parseHtml5(html)));
+  // parse5 keeps <template> content out of the tree, but its serialization
+  // puts it back inline, so empty it again as jsdom shows it.
+  for (const template of Array.from(document.querySelectorAll("template"))) template.replaceChildren();
+  // linkedom has no documentURI and returns <base href> unresolved; Readability
+  // resolves links against both, so pin them to what jsdom reported.
+  const documentURI = new URL(url).href;
+  let baseURI = documentURI;
+  const baseHref = document.querySelector("base[href]")?.getAttribute("href");
+  try {
+    if (baseHref) baseURI = new URL(baseHref, documentURI).href;
+  } catch {
+    /* jsdom ignores an invalid <base> too */
+  }
+  // linkedom reads the title from <head> only; the spec (and jsdom) take the
+  // first HTML <title> anywhere, whitespace collapsed.
+  const titleElement = document.querySelector("title:not(svg title)");
+  Object.defineProperties(document, {
+    documentURI: { value: documentURI },
+    baseURI: { value: baseURI },
+    title: { get: () => (titleElement?.textContent ?? "").replace(/[\t\n\f\r ]+/g, " ").trim() },
+  });
+  return document as unknown as Document;
+}
+
 /**
  * Shared Token-Optimization Pipeline:
- * JSDOM parsing -> Aggressive DOM Pruning -> CSS Selector scoping -> Readability -> Turndown Markdown
+ * parse5 + linkedom parsing -> Aggressive DOM Pruning -> CSS Selector scoping -> Readability -> Turndown Markdown
  */
 export function processHtmlToMarkdown(
   rawHtml: string,
@@ -522,27 +567,13 @@ export function processHtmlToMarkdown(
   }
 ): string {
   const { url, cssSelector, linkFormat = "inline", imageMode = "ignore" } = options;
-  const dom = new JSDOM(rawHtml, { url });
-  return processDocumentToMarkdown(dom.window.document, cssSelector, url, linkFormat, imageMode);
-}
-
-/** Below this, a pruned result is treated as "the heuristic may have eaten the page". */
-const MIN_USEFUL_MARKDOWN_CHARS = 200;
-
-function processDocumentToMarkdown(
-  document: Document,
-  cssSelector?: string,
-  baseUrl?: string,
-  linkFormat: LinkFormat = "inline",
-  imageMode: ImageMode = "ignore"
-): string {
   // Link-density pruning drops menus, but on link-heavy pages (news homepages,
   // where every headline card is an <a>) it removes the content itself and
-  // returns nothing. Keep an untouched copy and fall back to it in that case.
-  const unpruned = document.cloneNode(true) as Document;
-  const markdown = renderDocument(document, cssSelector, baseUrl, linkFormat, imageMode, true);
+  // returns nothing. Fall back to a fresh, unpruned parse in that case
+  // (re-parsing only then is cheaper than cloning every document up front).
+  const markdown = renderDocument(parseLightDocument(rawHtml, url), cssSelector, url, linkFormat, imageMode, true);
   if (markdown.length >= MIN_USEFUL_MARKDOWN_CHARS) return markdown;
-  const fallback = renderDocument(unpruned, cssSelector, baseUrl, linkFormat, imageMode, false);
+  const fallback = renderDocument(parseLightDocument(rawHtml, url), cssSelector, url, linkFormat, imageMode, false);
   // Only when pruning removed most of the page; a small page losing its tag cloud is fine.
   return markdown.length < fallback.length * 0.25 ? fallback : markdown;
 }
@@ -1023,8 +1054,7 @@ export interface BatchExtractResult {
  * Extract rich metadata (Open Graph tags, canonical URL, author, date, description, title) from raw HTML.
  */
 export function extractMetadata(rawHtml: string, url: string): PageMetadata {
-  const dom = new JSDOM(rawHtml, { url });
-  return extractMetadataFromDocument(dom.window.document);
+  return extractMetadataFromDocument(parseLightDocument(rawHtml, url));
 }
 
 function extractMetadataFromDocument(document: Document): PageMetadata {
@@ -1212,6 +1242,9 @@ export async function extractStructured(
     maxRetries,
   });
 
+  // jsdom stays for caller-supplied schema selectors (its selector engine is the
+  // reference); loaded lazily so the extract path never pays for it.
+  const { JSDOM } = await import("jsdom");
   const dom = new JSDOM(rawHtml, { url });
   const document = dom.window.document;
   const metadata = includeMetadata ? extractMetadataFromDocument(document) : undefined;
@@ -1254,7 +1287,7 @@ export async function extractStructured(
     }
   }
 
-  const markdown = processDocumentToMarkdown(document, cssSelector, url);
+  const markdown = processHtmlToMarkdown(rawHtml, { url, cssSelector });
 
   return {
     url,
@@ -1370,16 +1403,4 @@ export async function batchExtract(
     results,
   };
 }
-
-// Re-export web mapping and recursive crawling capabilities
-export {
-  mapWebsite,
-  crawlWebsite,
-  type MapWebsiteOptions,
-  type MapWebsiteResult,
-  type DiscoveredUrl,
-  type CrawlWebsiteOptions,
-  type CrawlWebsiteResult,
-  type CrawledPage,
-} from "./crawler.js";
 
