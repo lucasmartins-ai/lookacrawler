@@ -622,9 +622,7 @@ export async function discoverLocalLeadsViaCli(
       // "inactivity timeout" is how maps-leads ends a search with no results:
       // that is an empty answer, not a failure.
       const scraperError = leads.length === 0
-        ? (stdinError || (child && !child.stdin.writableFinished)
-            ? `query not delivered (${stdinError || "stdin closed before the query was written"})`
-            : "") ||
+        ? (stdinError ? `query not delivered (${stdinError})` : "") ||
           ([...stderrBuffer.matchAll(/"error":"([^"]+)"/g)].map((m) => m[1]).find((e) => !/inactivity timeout/i.test(e)) ?? "")
         : "";
       resolve({
@@ -763,8 +761,10 @@ export async function discoverLocalLeadsViaCli(
 
     // Send query to stdin and close write stream. A scraper that exits before reading it makes the
     // write fail with EPIPE; without a listener that is an uncaught exception. `finish` reports it
-    // when the run produced no leads. On Linux "close" can come before this error, so `finish` also
-    // checks whether the write was flushed.
+    // when the run produced no leads.
+    // ponytail: if "close" beats this error (a scraper that exits 0 at once without reading), the run
+    // reads as an empty result; maps-leads always reads stdin and a crash exits non-zero, which
+    // `finish` already reports. Bun's writableFinished cannot tell a flushed write on Linux.
     child.stdin.on("error", (err: Error) => {
       stdinError ||= err.message;
     });
