@@ -70,9 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the linux-x64 binary and runs `--version`, `init --dry-run` and `extract`
   outside the repo. Measured on an M-series Mac (6 runs, `/usr/bin/time -l`,
   warm runs, cold first run excluded): darwin-arm64 binary 73 MB, linux-x64
-  104 MB; `--version` 0.15 s / 70 MB RSS (via `bun cli.ts`: 0.02 s / 31 MB);
-  `extract https://example.com` 0.53 s / 162 MB (via `bun cli.ts`: 0.70 s /
-  176 MB).
+  104 MB; `--version` 0.14 s / 70 MB RSS (via `bun cli.ts`: 0.02 s / 31 MB);
+  `extract https://example.com` 0.41-0.51 s / 163 MB (via `bun cli.ts`:
+  0.56-0.58 s / 177 MB). Commit d1f3b97, 2026-11-21.
 - `tiktok profile @handle [--limit N]` and `tiktok trends [--region BR] [--period 7|30]
   [--kind hashtag|video]`, also as MCP tools `tiktok_profile` / `tiktok_trends`.
   Profiles come from `yt-dlp --flat-playlist`, falling back to a plain headless
